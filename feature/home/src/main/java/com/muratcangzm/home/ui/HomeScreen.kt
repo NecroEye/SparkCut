@@ -1,32 +1,43 @@
 package com.muratcangzm.home.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.VideoLibrary
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.muratcangzm.designsystem.button.SparkCutButtonSize
+import com.muratcangzm.designsystem.button.SparkCutPrimaryButton
+import com.muratcangzm.designsystem.card.SparkCutCard
+import com.muratcangzm.designsystem.card.SparkCutCardTone
+import com.muratcangzm.designsystem.chip.SparkCutStatusChip
+import com.muratcangzm.designsystem.chip.SparkCutStatusTone
+import com.muratcangzm.designsystem.component.SparkCutScaffold
+import com.muratcangzm.designsystem.component.SparkCutTopBar
+import com.muratcangzm.designsystem.theme.SparkCutTheme
 import org.koin.androidx.compose.koinViewModel
 
 @Composable
@@ -54,109 +65,132 @@ fun HomeScreen(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreenContent(
+private fun HomeScreenContent(
     state: HomeContract.State,
     onEvent: (HomeContract.Event) -> Unit,
 ) {
-    Scaffold(
+    val spacing = SparkCutTheme.spacing
+    val colors = SparkCutTheme.colors
+
+    SparkCutScaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("SparkCut") },
+            SparkCutTopBar(
+                title = "SparkCut",
+                subtitle = if (state.isLoading) {
+                    "Preparing your creative workspace"
+                } else {
+                    "Create polished short videos faster"
+                }
             )
-        },
+        }
     ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
-        ) {
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    androidx.compose.foundation.layout.Column(
-                        modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.AutoAwesome,
-                            contentDescription = null,
-                        )
+        when {
+            state.isLoading -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = colors.primary
+                    )
+                }
+            }
 
-                        Text(
-                            text = "Make short videos fast",
-                            style = MaterialTheme.typography.headlineSmall,
-                        )
-
-                        Text(
-                            text = "Pick a template, add your photos or clips, and export a polished reel in minutes.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-
-                        Button(
-                            onClick = {
+            else -> {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentPadding = PaddingValues(spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(spacing.md),
+                ) {
+                    item {
+                        HomeHeroCard(
+                            onBrowseTemplates = {
                                 onEvent(HomeContract.Event.BrowseAllTemplatesClicked)
-                            },
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Collections,
-                                contentDescription = null,
-                            )
-                            Text(
-                                text = "Browse templates",
-                                modifier = Modifier.padding(start = 8.dp),
+                            }
+                        )
+                    }
+
+                    if (state.featuredTemplates.isNotEmpty()) {
+                        item {
+                            HomeSectionHeader(
+                                title = "Featured templates",
+                                subtitle = "Fast starting points for the most popular edit styles."
                             )
                         }
+
+                        item {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(spacing.md),
+                                contentPadding = PaddingValues(end = spacing.xs),
+                            ) {
+                                items(
+                                    items = state.featuredTemplates,
+                                    key = { it.id.value }
+                                ) { item ->
+                                    FeaturedTemplateCard(
+                                        item = item,
+                                        onClick = {
+                                            onEvent(
+                                                HomeContract.Event.FeaturedTemplateClicked(item.id)
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+                        }
                     }
-                }
-            }
 
-            item {
-                SectionTitle(
-                    title = "Featured",
-                    subtitle = "Best starting points for fast edits",
-                )
-            }
+                    if (state.categories.isNotEmpty()) {
+                        item {
+                            HomeSectionHeader(
+                                title = "Categories",
+                                subtitle = "Jump into a creative direction that already fits your content."
+                            )
+                        }
 
-            item {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(state.featuredTemplates.size) { index ->
-                        val item = state.featuredTemplates[index]
-                        FeaturedTemplateCard(
-                            item = item,
-                            onClick = {
-                                onEvent(
-                                    HomeContract.Event.FeaturedTemplateClicked(item.id)
-                                )
-                            },
+                        item {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(spacing.xs),
+                                contentPadding = PaddingValues(vertical = spacing.xxs),
+                            ) {
+                                items(
+                                    items = state.categories,
+                                    key = { it.category.name }
+                                ) { category ->
+                                    androidx.compose.material3.FilterChip(
+                                        selected = false,
+                                        onClick = {
+                                            onEvent(
+                                                HomeContract.Event.CategoryClicked(category.category)
+                                            )
+                                        },
+                                        label = {
+                                            Text(category.label)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        HomeQuickBrowseCard(
+                            featuredCount = state.featuredTemplates.size,
+                            categoryCount = state.categories.size,
+                            onBrowseTemplates = {
+                                onEvent(HomeContract.Event.BrowseAllTemplatesClicked)
+                            }
                         )
                     }
-                }
-            }
 
-            item {
-                SectionTitle(
-                    title = "Categories",
-                    subtitle = "Jump into a ready-made content style",
-                )
-            }
-
-            item {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(state.categories.size) { index ->
-                        val category = state.categories[index]
-                        AssistChip(
-                            onClick = {
-                                onEvent(HomeContract.Event.CategoryClicked(category.category))
-                            },
-                            label = { Text(category.label) },
+                    item {
+                        Spacer(
+                            modifier = Modifier.navigationBarsPadding()
                         )
                     }
                 }
@@ -166,21 +200,98 @@ fun HomeScreenContent(
 }
 
 @Composable
-private fun SectionTitle(
+private fun HomeHeroCard(
+    onBrowseTemplates: () -> Unit,
+) {
+    val spacing = SparkCutTheme.spacing
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+
+    SparkCutCard(
+        modifier = Modifier.fillMaxWidth(),
+        tone = SparkCutCardTone.Accent
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(spacing.sm)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(spacing.xs)
+            ) {
+                SparkCutStatusChip(
+                    text = "Fast workflow",
+                    tone = SparkCutStatusTone.Info
+                )
+                SparkCutStatusChip(
+                    text = "Template-based",
+                    tone = SparkCutStatusTone.Accent
+                )
+                SparkCutStatusChip(
+                    text = "Creator ready",
+                    tone = SparkCutStatusTone.Success
+                )
+            }
+
+            Box(
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.AutoAwesome,
+                    contentDescription = null,
+                    tint = colors.textPrimary,
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+
+            Text(
+                text = "Make short videos fast",
+                style = typography.display,
+                color = colors.textPrimary
+            )
+
+            Text(
+                text = "Pick a template, add your photos or clips, refine the edit, and export a polished reel without getting lost in complicated controls.",
+                style = typography.body,
+                color = colors.textSecondary
+            )
+
+            SparkCutPrimaryButton(
+                text = "Browse templates",
+                onClick = onBrowseTemplates,
+                modifier = Modifier.fillMaxWidth(),
+                size = SparkCutButtonSize.Large,
+                leadingContent = {
+                    Icon(
+                        imageVector = Icons.Outlined.Collections,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun HomeSectionHeader(
     title: String,
     subtitle: String,
 ) {
-    androidx.compose.foundation.layout.Column(
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+    val spacing = SparkCutTheme.spacing
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(spacing.xxs)
     ) {
         Text(
             text = title,
-            style = MaterialTheme.typography.titleLarge,
+            style = typography.sectionTitle,
+            color = colors.textPrimary
         )
         Text(
             text = subtitle,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = typography.body,
+            color = colors.textSecondary
         )
     }
 }
@@ -190,34 +301,115 @@ private fun FeaturedTemplateCard(
     item: HomeContract.FeaturedTemplateItem,
     onClick: () -> Unit,
 ) {
-    ElevatedCard(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(0.88f),
+    val spacing = SparkCutTheme.spacing
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+
+    SparkCutCard(
+        modifier = Modifier.fillMaxWidth(0.86f),
+        tone = SparkCutCardTone.Elevated,
+        onClick = onClick
     ) {
-        androidx.compose.foundation.layout.Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+        Column(
+            verticalArrangement = Arrangement.spacedBy(spacing.sm)
         ) {
-            Icon(
-                imageVector = Icons.Outlined.VideoLibrary,
-                contentDescription = null,
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(spacing.xs)
+            ) {
+                SparkCutStatusChip(
+                    text = item.categoryLabel,
+                    tone = SparkCutStatusTone.Info
+                )
+                SparkCutStatusChip(
+                    text = "Featured",
+                    tone = SparkCutStatusTone.Accent
+                )
+            }
+
+            Box(
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.VideoLibrary,
+                    contentDescription = null,
+                    tint = colors.textSecondary,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
 
             Text(
                 text = item.name,
-                style = MaterialTheme.typography.titleMedium,
+                style = typography.sectionTitle,
+                color = colors.textPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
 
             Text(
                 text = item.subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = typography.body,
+                color = colors.textSecondary,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
             )
 
-            AssistChip(
-                onClick = {},
-                enabled = false,
-                label = { Text(item.categoryLabel) },
+            SparkCutPrimaryButton(
+                text = "Start with this template",
+                onClick = onClick,
+                modifier = Modifier.fillMaxWidth(),
+                size = SparkCutButtonSize.Medium
+            )
+        }
+    }
+}
+
+@Composable
+private fun HomeQuickBrowseCard(
+    featuredCount: Int,
+    categoryCount: Int,
+    onBrowseTemplates: () -> Unit,
+) {
+    val spacing = SparkCutTheme.spacing
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+
+    SparkCutCard(
+        modifier = Modifier.fillMaxWidth(),
+        tone = SparkCutCardTone.Elevated
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(spacing.sm)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(spacing.xs)
+            ) {
+                SparkCutStatusChip(
+                    text = "$featuredCount featured",
+                    tone = SparkCutStatusTone.Info
+                )
+                SparkCutStatusChip(
+                    text = "$categoryCount categories",
+                    tone = SparkCutStatusTone.Neutral
+                )
+            }
+
+            Text(
+                text = "Explore the full template library",
+                style = typography.sectionTitle,
+                color = colors.textPrimary
+            )
+
+            Text(
+                text = "Browse all available templates when you want more styles, more categories, and more control over how your next edit begins.",
+                style = typography.body,
+                color = colors.textSecondary
+            )
+
+            SparkCutPrimaryButton(
+                text = "Open template library",
+                onClick = onBrowseTemplates,
+                modifier = Modifier.fillMaxWidth(),
+                size = SparkCutButtonSize.Medium
             )
         }
     }

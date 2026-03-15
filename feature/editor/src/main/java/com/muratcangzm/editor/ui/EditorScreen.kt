@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -29,45 +31,51 @@ import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.MovieCreation
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.muratcangzm.designsystem.banner.SparkCutValidationBanner
+import com.muratcangzm.designsystem.banner.SparkCutValidationBannerSeverity
+import com.muratcangzm.designsystem.button.SparkCutButtonSize
+import com.muratcangzm.designsystem.button.SparkCutPrimaryButton
+import com.muratcangzm.designsystem.button.SparkCutSecondaryButton
+import com.muratcangzm.designsystem.card.SparkCutCard
+import com.muratcangzm.designsystem.card.SparkCutCardTone
+import com.muratcangzm.designsystem.chip.SparkCutStatusChip
+import com.muratcangzm.designsystem.chip.SparkCutStatusTone
+import com.muratcangzm.designsystem.component.SparkCutScaffold
+import com.muratcangzm.designsystem.component.SparkCutTopBar
+import com.muratcangzm.designsystem.field.SparkCutTextField
+import com.muratcangzm.designsystem.theme.SparkCutTheme
+import com.muratcangzm.editor.ui.reorder.EditorReorderState
+import com.muratcangzm.editor.ui.reorder.reorderDragHandle
+import com.muratcangzm.media.domain.MediaDurationFormatter
 import com.muratcangzm.media.domain.MediaThumbnailProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.ui.graphics.graphicsLayer
-import com.muratcangzm.editor.ui.reorder.EditorReorderState
-import com.muratcangzm.editor.ui.reorder.reorderDragHandle
-import androidx.compose.material3.RangeSlider
-import com.muratcangzm.media.domain.MediaDurationFormatter
 
 @Composable
 fun EditorScreen(
@@ -76,7 +84,7 @@ fun EditorScreen(
     onBack: () -> Unit,
     onOpenExport: (EditorContract.ExportPayload) -> Unit,
     viewModel: EditorViewModel = koinViewModel(
-        parameters = { parametersOf(templateId, mediaUris) }
+        parameters = { parametersOf(templateId, mediaUris, null) }
     ),
     thumbnailProvider: MediaThumbnailProvider = koinInject(),
 ) {
@@ -103,18 +111,32 @@ fun EditorScreen(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EditorScreenContent(
+private fun EditorScreenContent(
     state: EditorContract.State,
     snackbarHostState: SnackbarHostState,
     onEvent: (EditorContract.Event) -> Unit,
     thumbnailProvider: MediaThumbnailProvider,
 ) {
-    Scaffold(
+    val spacing = SparkCutTheme.spacing
+    val colors = SparkCutTheme.colors
+
+    val listState = rememberLazyListState()
+    val reorderState = remember {
+        EditorReorderState(
+            listState = listState,
+            onMove = { from, to ->
+                onEvent(EditorContract.Event.ReorderMedia(from, to))
+            }
+        )
+    }
+
+    SparkCutScaffold(
+        snackbarHostState = snackbarHostState,
         topBar = {
-            TopAppBar(
-                title = { Text("Editor") },
+            SparkCutTopBar(
+                title = "Editor",
+                subtitle = state.template?.name ?: "Project editing",
                 navigationIcon = {
                     IconButton(
                         onClick = { onEvent(EditorContract.Event.BackClicked) }
@@ -122,213 +144,255 @@ fun EditorScreenContent(
                         Icon(
                             imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
                             contentDescription = "Back",
+                            tint = colors.textPrimary
                         )
                     }
-                },
+                }
             )
-        },
-        snackbarHost = {
-            SnackbarHost(hostState = snackbarHostState)
         },
         bottomBar = {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding(),
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text(
-                        text = when {
-                            state.isResolvingMedia -> "Reading media..."
-                            state.canExport -> "Ready to continue"
-                            else -> "Complete required fields to continue"
-                        },
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-
-                    Button(
-                        onClick = { onEvent(EditorContract.Event.ExportClicked) },
-                        enabled = state.canExport,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.MovieCreation,
-                            contentDescription = null,
-                        )
-                        Text(
-                            text = "Continue to export",
-                            modifier = Modifier.padding(start = 8.dp),
-                        )
+            if (!state.isLoading && state.template != null) {
+                EditorBottomBar(
+                    state = state,
+                    onExportClick = {
+                        onEvent(EditorContract.Event.ExportClicked)
                     }
-                }
+                )
             }
-        },
-    ) { innerPadding ->
-
-        val listState = rememberLazyListState()
-        val reorderState = remember {
-            EditorReorderState(
-                listState = listState,
-                onMove = { from, to ->
-                    onEvent(EditorContract.Event.ReorderMedia(from, to))
-                }
-            )
         }
+    ) { innerPadding ->
+        when {
+            state.isLoading -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = colors.primary
+                    )
+                }
+            }
 
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            item {
-                if (state.template != null) {
-                    TemplateHeaderCard(template = state.template)
-                } else {
-                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = state.errorMessage ?: "Editor could not load template.",
-                            modifier = Modifier.padding(16.dp),
+            state.template == null -> {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentPadding = PaddingValues(spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(spacing.md)
+                ) {
+                    item {
+                        SparkCutValidationBanner(
+                            title = "Editor unavailable",
+                            message = state.errorMessage ?: "The editor could not load this project.",
+                            severity = SparkCutValidationBannerSeverity.Error
+                        )
+                    }
+
+                    item {
+                        SparkCutSecondaryButton(
+                            text = "Go back",
+                            onClick = { onEvent(EditorContract.Event.BackClicked) },
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
                 }
             }
 
-            item {
-                EditorSectionCard(
-                    icon = Icons.Outlined.AutoAwesome,
-                    title = "Media sequence",
-                    subtitle = if (state.isResolvingMedia) {
-                        "Resolving media metadata..."
-                    } else {
-                        "Change the order to reassign assets to different template slots"
-                    },
+            else -> {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentPadding = PaddingValues(spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(spacing.md)
                 ) {
-                    if (state.selectedMedia.isEmpty()) {
-                        Text(
-                            text = "No media available.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    item {
+                        EditorHeaderCard(
+                            state = state
                         )
-                    } else {
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            state.selectedMedia.forEachIndexed { index, item ->
-                                EditorMediaCard(
-                                    item = item,
-                                    thumbnailProvider = thumbnailProvider,
-                                    onMoveUp = {
-                                        onEvent(EditorContract.Event.MoveMediaUp(item.uri))
-                                    },
-                                    onMoveDown = {
-                                        onEvent(EditorContract.Event.MoveMediaDown(item.uri))
-                                    },
-                                    onTrimChanged = { startMs, endMs ->
-                                        onEvent(
-                                            EditorContract.Event.TrimChanged(
-                                                uri = item.uri,
-                                                startMs = startMs,
-                                                endMs = endMs,
-                                            )
-                                        )
-                                    },
-                                    modifier = Modifier
-                                        .graphicsLayer {
-                                            translationY = reorderState.offsetFor(index)
-                                        }
-                                        .reorderDragHandle(
-                                            index = index,
-                                            state = reorderState,
-                                        ),
-                                )
-                            }
-                        }
                     }
-                }
-            }
 
-            item {
-                EditorSectionCard(
-                    icon = Icons.Outlined.TextFields,
-                    title = "Text overlays",
-                    subtitle = if (state.textFields.isEmpty()) {
-                        "This template has no editable text"
-                    } else {
-                        "Update title, caption, CTA or other text fields"
-                    },
-                ) {
-                    if (state.textFields.isEmpty()) {
-                        Text(
-                            text = "No editable text fields for this template.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            state.textFields.forEach { field ->
-                                OutlinedTextField(
-                                    value = field.value,
-                                    onValueChange = {
-                                        onEvent(
-                                            EditorContract.Event.TextChanged(
-                                                fieldId = field.id,
-                                                value = it,
-                                            )
-                                        )
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = {
-                                        Text(
-                                            text = if (field.required) {
-                                                "${field.label} *"
-                                            } else {
-                                                field.label
-                                            }
-                                        )
-                                    },
-                                    placeholder = {
-                                        Text(field.placeholder)
-                                    },
-                                    supportingText = {
-                                        Text("${field.value.length}/${field.maxLength}")
-                                    },
-                                    singleLine = false,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            item {
-                EditorSectionCard(
-                    icon = Icons.Outlined.Tune,
-                    title = "Transition preset",
-                    subtitle = "Choose the overall transition style for this reel",
-                ) {
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(state.transitions) { item ->
-                            FilterChip(
-                                selected = item.isSelected,
-                                onClick = {
-                                    onEvent(
-                                        EditorContract.Event.TransitionSelected(item.preset)
-                                    )
-                                },
-                                label = { Text(item.label) },
+                    if (state.validationErrors.isNotEmpty() || state.validationWarnings.isNotEmpty()) {
+                        item {
+                            ValidationSummaryCard(
+                                errors = state.validationErrors,
+                                warnings = state.validationWarnings,
                             )
                         }
+                    }
+
+                    item {
+                        EditorSectionCard(
+                            title = "Media sequence",
+                            subtitle = if (state.isResolvingMedia) {
+                                "Resolving media metadata and preparing editable clips."
+                            } else {
+                                "Reorder items to change slot assignments and trim supported clips."
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Outlined.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = colors.textPrimary
+                                )
+                            }
+                        ) {
+                            if (state.selectedMedia.isEmpty()) {
+                                Text(
+                                    text = "No media available for this project.",
+                                    style = SparkCutTheme.typography.body,
+                                    color = colors.textSecondary
+                                )
+                            } else {
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(spacing.sm)
+                                ) {
+                                    state.selectedMedia.forEachIndexed { index, item ->
+                                        EditorMediaCard(
+                                            item = item,
+                                            thumbnailProvider = thumbnailProvider,
+                                            onMoveUp = {
+                                                onEvent(EditorContract.Event.MoveMediaUp(item.uri))
+                                            },
+                                            onMoveDown = {
+                                                onEvent(EditorContract.Event.MoveMediaDown(item.uri))
+                                            },
+                                            onTrimChanged = { startMs, endMs ->
+                                                onEvent(
+                                                    EditorContract.Event.TrimChanged(
+                                                        uri = item.uri,
+                                                        startMs = startMs,
+                                                        endMs = endMs,
+                                                    )
+                                                )
+                                            },
+                                            modifier = Modifier
+                                                .graphicsLayer {
+                                                    translationY = reorderState.offsetFor(index)
+                                                }
+                                                .reorderDragHandle(
+                                                    index = index,
+                                                    state = reorderState,
+                                                ),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        EditorSectionCard(
+                            title = "Text overlays",
+                            subtitle = if (state.textFields.isEmpty()) {
+                                "This template does not expose editable text layers."
+                            } else {
+                                "Update titles, captions and CTA text before export."
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Outlined.TextFields,
+                                    contentDescription = null,
+                                    tint = colors.textPrimary
+                                )
+                            }
+                        ) {
+                            if (state.textFields.isEmpty()) {
+                                Text(
+                                    text = "No editable text fields for this template.",
+                                    style = SparkCutTheme.typography.body,
+                                    color = colors.textSecondary
+                                )
+                            } else {
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(spacing.sm)
+                                ) {
+                                    state.textFields.forEach { field ->
+                                        Column(
+                                            verticalArrangement = Arrangement.spacedBy(spacing.xs)
+                                        ) {
+                                            SparkCutTextField(
+                                                value = field.value,
+                                                onValueChange = {
+                                                    onEvent(
+                                                        EditorContract.Event.TextChanged(
+                                                            fieldId = field.id,
+                                                            value = it,
+                                                        )
+                                                    )
+                                                },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                label = if (field.required) {
+                                                    "${field.label} *"
+                                                } else {
+                                                    field.label
+                                                },
+                                                placeholder = field.placeholder,
+                                                supportingText = "${field.value.length}/${field.maxLength}",
+                                                errorText = if (field.required && field.value.isBlank()) {
+                                                    "Required field"
+                                                } else {
+                                                    null
+                                                },
+                                                minLines = 3,
+                                                maxLines = 5
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        EditorSectionCard(
+                            title = "Transition preset",
+                            subtitle = "Choose the overall transition style used across the reel.",
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Outlined.Tune,
+                                    contentDescription = null,
+                                    tint = colors.textPrimary
+                                )
+                            }
+                        ) {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(spacing.xs)
+                            ) {
+                                items(state.transitions) { item ->
+                                    FilterChip(
+                                        selected = item.isSelected,
+                                        onClick = {
+                                            onEvent(
+                                                EditorContract.Event.TransitionSelected(item.preset)
+                                            )
+                                        },
+                                        label = {
+                                            Text(item.label)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        ExportReadinessCard(
+                            state = state,
+                            onExportClick = {
+                                onEvent(EditorContract.Event.ExportClicked)
+                            }
+                        )
+                    }
+
+                    item {
+                        Spacer(
+                            modifier = Modifier.height(spacing.xxl)
+                        )
                     }
                 }
             }
@@ -337,39 +401,235 @@ fun EditorScreenContent(
 }
 
 @Composable
-private fun TemplateHeaderCard(
-    template: EditorContract.TemplateSummary,
+private fun EditorBottomBar(
+    state: EditorContract.State,
+    onExportClick: () -> Unit,
 ) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+    val spacing = SparkCutTheme.spacing
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colors.backgroundAlt)
+            .navigationBarsPadding()
+            .padding(
+                horizontal = spacing.md,
+                vertical = spacing.sm
+            )
+    ) {
+        SparkCutCard(
+            modifier = Modifier.fillMaxWidth(),
+            tone = SparkCutCardTone.Elevated
         ) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(spacing.sm)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SparkCutStatusChip(
+                        text = editorBottomBarStatusText(state),
+                        tone = editorBottomBarStatusTone(state)
+                    )
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    Text(
+                        text = editorAutosaveSecondaryText(state.autosaveState),
+                        style = typography.meta,
+                        color = if (state.autosaveState.status == EditorContract.AutosaveState.Status.Error) {
+                            colors.error
+                        } else {
+                            colors.textMuted
+                        }
+                    )
+                }
+
+                Text(
+                    text = editorBottomBarSummaryText(state),
+                    style = typography.body,
+                    color = colors.textSecondary
+                )
+
+                SparkCutPrimaryButton(
+                    text = if (state.isResolvingMedia) {
+                        "Preparing project..."
+                    } else {
+                        "Continue to export"
+                    },
+                    onClick = onExportClick,
+                    enabled = state.canExport,
+                    loading = state.isResolvingMedia,
+                    size = SparkCutButtonSize.Large,
+                    modifier = Modifier.fillMaxWidth(),
+                    leadingContent = {
+                        Icon(
+                            imageVector = Icons.Outlined.MovieCreation,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditorHeaderCard(
+    state: EditorContract.State,
+) {
+    val template = state.template ?: return
+    val spacing = SparkCutTheme.spacing
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+
+    SparkCutCard(
+        modifier = Modifier.fillMaxWidth(),
+        tone = SparkCutCardTone.Accent
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(spacing.sm)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(spacing.xs)
+            ) {
+                SparkCutStatusChip(
+                    text = template.categoryLabel,
+                    tone = SparkCutStatusTone.Info
+                )
+                SparkCutStatusChip(
+                    text = template.aspectRatioLabel,
+                    tone = SparkCutStatusTone.Neutral
+                )
+                SparkCutStatusChip(
+                    text = if (state.canExport) "Ready" else "Editing",
+                    tone = if (state.canExport) {
+                        SparkCutStatusTone.Success
+                    } else {
+                        SparkCutStatusTone.Warning
+                    }
+                )
+                SparkCutStatusChip(
+                    text = editorAutosaveChipText(state.autosaveState),
+                    tone = editorAutosaveChipTone(state.autosaveState)
+                )
+            }
+
             Text(
                 text = template.name,
-                style = MaterialTheme.typography.titleLarge,
+                style = typography.screenTitle,
+                color = colors.textPrimary
             )
 
             Text(
                 text = template.description,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = typography.body,
+                color = colors.textSecondary
             )
 
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(spacing.xs)
             ) {
-                AssistChip(
-                    onClick = {},
-                    enabled = false,
-                    label = { Text(template.categoryLabel) },
+                SparkCutStatusChip(
+                    text = "${state.selectedMedia.size} media",
+                    tone = SparkCutStatusTone.Neutral
                 )
+                SparkCutStatusChip(
+                    text = "${state.textFields.size} text fields",
+                    tone = SparkCutStatusTone.Neutral
+                )
+                SparkCutStatusChip(
+                    text = "${state.transitions.size} transitions",
+                    tone = SparkCutStatusTone.Neutral
+                )
+            }
+        }
+    }
+}
 
-                Text(
-                    text = "Format ${template.aspectRatioLabel}",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+@Composable
+private fun ValidationSummaryCard(
+    errors: List<String>,
+    warnings: List<String>,
+) {
+    val spacing = SparkCutTheme.spacing
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+
+    val title = when {
+        errors.isNotEmpty() -> "Validation issues found"
+        warnings.isNotEmpty() -> "Review before export"
+        else -> "Project validation"
+    }
+
+    val severity = when {
+        errors.isNotEmpty() -> SparkCutValidationBannerSeverity.Error
+        warnings.isNotEmpty() -> SparkCutValidationBannerSeverity.Warning
+        else -> SparkCutValidationBannerSeverity.Info
+    }
+
+    val summaryMessage = buildString {
+        if (errors.isNotEmpty()) {
+            append("${errors.size} error")
+            if (errors.size != 1) append("s")
+        }
+        if (warnings.isNotEmpty()) {
+            if (isNotBlank()) append(" • ")
+            append("${warnings.size} warning")
+            if (warnings.size != 1) append("s")
+        }
+        if (isBlank()) {
+            append("No issues detected.")
+        }
+    }
+
+    SparkCutCard(
+        modifier = Modifier.fillMaxWidth(),
+        tone = when (severity) {
+            SparkCutValidationBannerSeverity.Info -> SparkCutCardTone.Elevated
+            SparkCutValidationBannerSeverity.Warning -> SparkCutCardTone.Default
+            SparkCutValidationBannerSeverity.Error -> SparkCutCardTone.Focused
+        }
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(spacing.sm)
+        ) {
+            SparkCutValidationBanner(
+                title = title,
+                message = summaryMessage,
+                severity = severity,
+                issueCount = errors.size + warnings.size
+            )
+
+            if (errors.isNotEmpty()) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(spacing.xs)
+                ) {
+                    errors.forEach { message ->
+                        Text(
+                            text = "• $message",
+                            style = typography.body,
+                            color = colors.error
+                        )
+                    }
+                }
+            }
+
+            if (warnings.isNotEmpty()) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(spacing.xs)
+                ) {
+                    warnings.forEach { message ->
+                        Text(
+                            text = "• $message",
+                            style = typography.body,
+                            color = colors.textSecondary
+                        )
+                    }
+                }
             }
         }
     }
@@ -377,32 +637,46 @@ private fun TemplateHeaderCard(
 
 @Composable
 private fun EditorSectionCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     subtitle: String,
+    leadingIcon: @Composable (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+    val spacing = SparkCutTheme.spacing
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+
+    SparkCutCard(
+        modifier = Modifier.fillMaxWidth(),
+        tone = SparkCutCardTone.Elevated
+    ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(spacing.sm)
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-            )
+            if (leadingIcon != null) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(colors.surfaceFocused),
+                    contentAlignment = Alignment.Center
+                ) {
+                    leadingIcon()
+                }
+            }
 
             Column(
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = typography.sectionTitle,
+                    color = colors.textPrimary
                 )
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = typography.body,
+                    color = colors.textSecondary
                 )
             }
 
@@ -420,11 +694,17 @@ private fun EditorMediaCard(
     onTrimChanged: (Long, Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    ElevatedCard(modifier = modifier.fillMaxWidth()) {
+    val spacing = SparkCutTheme.spacing
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+
+    SparkCutCard(
+        modifier = modifier.fillMaxWidth(),
+        tone = SparkCutCardTone.Default
+    ) {
         Row(
-            modifier = Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(spacing.md),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             EditorMediaThumbnailBox(
                 uri = item.uri,
@@ -434,79 +714,98 @@ private fun EditorMediaCard(
 
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(spacing.xs),
             ) {
-                Text(
-                    text = "Item ${item.order + 1} • ${item.typeLabel}",
-                    style = MaterialTheme.typography.titleSmall,
-                )
-
-                AssistChip(
-                    onClick = {},
-                    enabled = false,
-                    label = { Text(item.slotLabel) },
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(spacing.xs)
+                ) {
+                    SparkCutStatusChip(
+                        text = "Item ${item.order + 1}",
+                        tone = SparkCutStatusTone.Neutral
+                    )
+                    SparkCutStatusChip(
+                        text = item.slotLabel,
+                        tone = SparkCutStatusTone.Info
+                    )
+                    SparkCutStatusChip(
+                        text = item.typeLabel,
+                        tone = if (item.isVideo) {
+                            SparkCutStatusTone.Info
+                        } else {
+                            SparkCutStatusTone.Success
+                        }
+                    )
+                }
 
                 Text(
                     text = item.fileName,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = typography.cardTitle,
+                    color = colors.textPrimary
                 )
 
                 item.resolutionLabel?.let { resolution ->
                     Text(
                         text = "Resolution: $resolution",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = typography.meta,
+                        color = colors.textMuted
                     )
                 }
 
                 item.durationLabel?.let { duration ->
                     Text(
                         text = "Duration: $duration",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = typography.meta,
+                        color = colors.textMuted
                     )
                 }
 
                 item.mimeType?.let { mimeType ->
                     Text(
                         text = mimeType,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = typography.meta,
+                        color = colors.textMuted
                     )
                 }
 
-                if (item.canTrim && item.sourceDurationMs != null && item.trimStartMs != null && item.trimEndMs != null) {
-                    val durationMs = item.sourceDurationMs.toFloat()
-                    val currentRange = remember(item.trimStartMs, item.trimEndMs) {
-                        androidx.compose.runtime.mutableStateOf(
-                            item.trimStartMs.toFloat()..item.trimEndMs.toFloat()
-                        )
+                if (
+                    item.canTrim &&
+                    item.sourceDurationMs != null &&
+                    item.trimStartMs != null &&
+                    item.trimEndMs != null
+                ) {
+                    var currentStart by remember(item.uri, item.trimStartMs) {
+                        mutableFloatStateOf(item.trimStartMs.toFloat())
+                    }
+                    var currentEnd by remember(item.uri, item.trimEndMs) {
+                        mutableFloatStateOf(item.trimEndMs.toFloat())
                     }
 
                     Text(
-                        text = "Trim: ${MediaDurationFormatter.format(item.trimStartMs)} - ${
-                            MediaDurationFormatter.format(item.trimEndMs)
+                        text = "Trim: ${MediaDurationFormatter.format(currentStart.toLong())} - ${
+                            MediaDurationFormatter.format(currentEnd.toLong())
                         }",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = typography.meta,
+                        color = colors.textMuted,
                     )
 
                     RangeSlider(
-                        value = currentRange.value,
-                        onValueChange = { currentRange.value = it },
+                        value = currentStart..currentEnd,
+                        onValueChange = { range ->
+                            currentStart = range.start
+                            currentEnd = range.endInclusive
+                        },
                         onValueChangeFinished = {
                             onTrimChanged(
-                                currentRange.value.start.toLong(),
-                                currentRange.value.endInclusive.toLong(),
+                                currentStart.toLong(),
+                                currentEnd.toLong(),
                             )
                         },
-                        valueRange = 0f..durationMs,
+                        valueRange = 0f..item.sourceDurationMs.toFloat(),
                     )
                 }
 
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(spacing.xs)
                 ) {
                     FilledTonalIconButton(
                         onClick = onMoveUp,
@@ -534,12 +833,47 @@ private fun EditorMediaCard(
 }
 
 @Composable
+private fun ExportReadinessCard(
+    state: EditorContract.State,
+    onExportClick: () -> Unit,
+) {
+    val canExport = state.canExport
+    val severity = when {
+        state.validationErrors.isNotEmpty() -> SparkCutValidationBannerSeverity.Error
+        state.hasMissingRequiredFields || state.validationWarnings.isNotEmpty() -> SparkCutValidationBannerSeverity.Warning
+        else -> SparkCutValidationBannerSeverity.Info
+    }
+
+    SparkCutValidationBanner(
+        title = if (canExport) {
+            "Ready for export"
+        } else {
+            "Export requirements not met"
+        },
+        message = when {
+            state.isResolvingMedia -> "Media is still being prepared."
+            state.validationErrors.isNotEmpty() -> "Resolve blocking issues before continuing."
+            state.hasMissingRequiredFields -> "Complete all required text fields before export."
+            state.validationWarnings.isNotEmpty() -> "You can continue after reviewing warnings."
+            else -> "Project settings look good. Continue when ready."
+        },
+        severity = severity,
+        issueCount = state.validationErrors.size + state.validationWarnings.size,
+        actionLabel = if (canExport) "Continue to export" else null,
+        onActionClick = if (canExport) onExportClick else null
+    )
+}
+
+@Composable
 private fun EditorMediaThumbnailBox(
     uri: String,
     isVideo: Boolean,
     thumbnailProvider: MediaThumbnailProvider,
     modifier: Modifier = Modifier,
 ) {
+    val colors = SparkCutTheme.colors
+    val shapes = SparkCutTheme.shapes
+
     val thumbnail by produceState<Bitmap?>(
         initialValue = null,
         key1 = uri,
@@ -557,10 +891,8 @@ private fun EditorMediaThumbnailBox(
         modifier = modifier
             .width(108.dp)
             .height(108.dp)
-            .background(
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                shape = RoundedCornerShape(18.dp),
-            ),
+            .clip(shapes.lg)
+            .background(colors.surfaceFocused),
         contentAlignment = Alignment.Center,
     ) {
         if (thumbnail != null) {
@@ -579,19 +911,102 @@ private fun EditorMediaThumbnailBox(
                 },
                 contentDescription = null,
                 modifier = Modifier.size(28.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = colors.textMuted,
             )
         }
 
-        AssistChip(
-            onClick = {},
-            enabled = false,
-            label = {
-                Text(if (isVideo) "Video" else "Photo")
-            },
+        Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 6.dp),
-        )
+                .padding(8.dp)
+        ) {
+            SparkCutStatusChip(
+                text = if (isVideo) "Video" else "Photo",
+                tone = if (isVideo) {
+                    SparkCutStatusTone.Info
+                } else {
+                    SparkCutStatusTone.Success
+                }
+            )
+        }
+    }
+}
+
+private fun editorBottomBarStatusText(state: EditorContract.State): String {
+    return when {
+        state.isResolvingMedia -> "Processing"
+        state.validationErrors.isNotEmpty() -> "Blocked"
+        state.canExport -> "Ready"
+        else -> "Needs review"
+    }
+}
+
+private fun editorBottomBarStatusTone(state: EditorContract.State): SparkCutStatusTone {
+    return when {
+        state.isResolvingMedia -> SparkCutStatusTone.Info
+        state.validationErrors.isNotEmpty() -> SparkCutStatusTone.Error
+        state.canExport -> SparkCutStatusTone.Success
+        else -> SparkCutStatusTone.Warning
+    }
+}
+
+private fun editorAutosaveChipText(
+    autosaveState: EditorContract.AutosaveState,
+): String {
+    return when (autosaveState.status) {
+        EditorContract.AutosaveState.Status.Idle -> "Auto-save"
+        EditorContract.AutosaveState.Status.Saving -> "Saving"
+        EditorContract.AutosaveState.Status.Saved -> "Saved"
+        EditorContract.AutosaveState.Status.Error -> "Save error"
+    }
+}
+
+private fun editorAutosaveChipTone(
+    autosaveState: EditorContract.AutosaveState,
+): SparkCutStatusTone {
+    return when (autosaveState.status) {
+        EditorContract.AutosaveState.Status.Idle -> SparkCutStatusTone.Neutral
+        EditorContract.AutosaveState.Status.Saving -> SparkCutStatusTone.Info
+        EditorContract.AutosaveState.Status.Saved -> SparkCutStatusTone.Success
+        EditorContract.AutosaveState.Status.Error -> SparkCutStatusTone.Error
+    }
+}
+
+private fun editorAutosaveSecondaryText(
+    autosaveState: EditorContract.AutosaveState,
+): String {
+    return autosaveState.message ?: when (autosaveState.status) {
+        EditorContract.AutosaveState.Status.Idle -> "Auto-save is enabled"
+        EditorContract.AutosaveState.Status.Saving -> "Saving changes..."
+        EditorContract.AutosaveState.Status.Saved -> "All changes saved"
+        EditorContract.AutosaveState.Status.Error -> "Project changes could not be saved."
+    }
+}
+
+private fun editorBottomBarSummaryText(state: EditorContract.State): String {
+    return when {
+        state.isResolvingMedia -> {
+            "SparkCut is resolving media and preparing the project."
+        }
+
+        state.validationErrors.isNotEmpty() -> {
+            state.validationErrors.first()
+        }
+
+        state.hasMissingRequiredFields -> {
+            "Complete required text fields before continuing."
+        }
+
+        state.validationWarnings.isNotEmpty() -> {
+            state.validationWarnings.first()
+        }
+
+        state.canExport -> {
+            "Project looks good. Continue to export when you are ready."
+        }
+
+        else -> {
+            "Review the project configuration before export."
+        }
     }
 }

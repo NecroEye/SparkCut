@@ -4,6 +4,7 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import com.muratcangzm.database.project.ProjectDao
 import com.muratcangzm.database.project.ProjectEntity
+import com.muratcangzm.database.project.ProjectMediaAssetEntity
 import com.muratcangzm.database.project.ProjectSlotBindingEntity
 import com.muratcangzm.database.project.ProjectTextValueEntity
 import com.muratcangzm.database.project.ProjectTransitionOverrideEntity
@@ -14,6 +15,7 @@ import com.muratcangzm.database.project.ProjectTransitionOverrideEntity
         ProjectSlotBindingEntity::class,
         ProjectTextValueEntity::class,
         ProjectTransitionOverrideEntity::class,
+        ProjectMediaAssetEntity::class,
     ],
     version = 1,
     exportSchema = true,

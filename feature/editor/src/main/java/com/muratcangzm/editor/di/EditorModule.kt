@@ -13,6 +13,7 @@ val editorModule = module {
             mediaUrisArg = mediaUris,
             projectSessionManager = get(),
             projectIdArg = projectId,
+            renderValidationEngine = get(),
         )
     }
 }

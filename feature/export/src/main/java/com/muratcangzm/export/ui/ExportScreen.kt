@@ -5,13 +5,17 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Audiotrack
@@ -25,23 +29,14 @@ import androidx.compose.material.icons.outlined.SettingsSuggest
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material.icons.outlined.VolumeUp
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -49,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -56,6 +52,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import com.muratcangzm.designsystem.banner.SparkCutValidationBanner
+import com.muratcangzm.designsystem.banner.SparkCutValidationBannerSeverity
+import com.muratcangzm.designsystem.button.SparkCutButtonSize
+import com.muratcangzm.designsystem.button.SparkCutPrimaryButton
+import com.muratcangzm.designsystem.button.SparkCutSecondaryButton
+import com.muratcangzm.designsystem.card.SparkCutCard
+import com.muratcangzm.designsystem.card.SparkCutCardTone
+import com.muratcangzm.designsystem.chip.SparkCutStatusChip
+import com.muratcangzm.designsystem.chip.SparkCutStatusTone
+import com.muratcangzm.designsystem.component.SparkCutScaffold
+import com.muratcangzm.designsystem.component.SparkCutTopBar
+import com.muratcangzm.designsystem.theme.SparkCutTheme
 import org.koin.androidx.compose.koinViewModel
 import org.koin.core.parameter.parametersOf
 
@@ -105,7 +113,7 @@ fun ExportScreen(
         }
     }
 
-    LaunchedEffect(state.backgroundMusicUri) {
+    LaunchedEffect(state.backgroundMusicUri, state.soundtrackErrorMessage) {
         previewPlayer.stop()
         previewPlayer.clearMediaItems()
         isMusicPreviewPlaying = false
@@ -168,19 +176,23 @@ fun ExportScreen(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ExportScreenContent(
+private fun ExportScreenContent(
     state: ExportContract.State,
     snackbarHostState: SnackbarHostState,
     onEvent: (ExportContract.Event) -> Unit,
     onToggleMusicPreview: () -> Unit,
     isMusicPreviewPlaying: Boolean,
 ) {
-    Scaffold(
+    val spacing = SparkCutTheme.spacing
+    val colors = SparkCutTheme.colors
+
+    SparkCutScaffold(
+        snackbarHostState = snackbarHostState,
         topBar = {
-            TopAppBar(
-                title = { Text("Export") },
+            SparkCutTopBar(
+                title = "Export",
+                subtitle = state.template?.name ?: "Render project",
                 navigationIcon = {
                     IconButton(
                         onClick = { onEvent(ExportContract.Event.BackClicked) }
@@ -188,364 +200,376 @@ fun ExportScreenContent(
                         Icon(
                             imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
                             contentDescription = "Back",
+                            tint = colors.textPrimary
                         )
                     }
-                },
+                }
             )
         },
-        snackbarHost = {
-            SnackbarHost(hostState = snackbarHostState)
-        },
         bottomBar = {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding(),
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    if (state.isExporting) {
-                        LinearProgressIndicator(
-                            progress = { state.progress },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text(
-                            text = "${state.progressPercent}% • ${state.statusText}",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        Text(
-                            text = state.statusText,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+            if (!state.isLoading && state.template != null) {
+                ExportBottomBar(
+                    state = state,
+                    onStartExport = {
+                        onEvent(ExportContract.Event.StartExportClicked)
+                    },
+                    onSaveToGallery = {
+                        onEvent(ExportContract.Event.SaveToGalleryClicked)
+                    },
+                    onShare = {
+                        onEvent(ExportContract.Event.ShareClicked)
                     }
-
-                    Button(
-                        onClick = { onEvent(ExportContract.Event.StartExportClicked) },
-                        enabled = state.canStartExport,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.MovieCreation,
-                            contentDescription = null,
-                        )
-                        Text(
-                            text = if (state.isExporting) "Exporting..." else "Start export",
-                            modifier = Modifier.padding(start = 8.dp),
-                        )
-                    }
-
-                    if (!state.completedOutputPath.isNullOrBlank()) {
-                        OutlinedButton(
-                            onClick = { onEvent(ExportContract.Event.SaveToGalleryClicked) },
-                            enabled = state.canSaveToGallery,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.SaveAlt,
-                                contentDescription = null,
-                            )
-                            Text(
-                                text = when {
-                                    state.isPublishing -> "Saving to gallery..."
-                                    state.publishedMediaUri != null -> "Saved to gallery"
-                                    else -> "Save to gallery"
-                                },
-                                modifier = Modifier.padding(start = 8.dp),
-                            )
-                        }
-
-                        OutlinedButton(
-                            onClick = { onEvent(ExportContract.Event.ShareClicked) },
-                            enabled = state.canShare,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.IosShare,
-                                contentDescription = null,
-                            )
-                            Text(
-                                text = "Share video",
-                                modifier = Modifier.padding(start = 8.dp),
-                            )
-                        }
-                    }
-                }
+                )
             }
-        },
+        }
     ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            item {
-                if (state.template != null) {
-                    TemplateExportHeader(template = state.template)
-                } else {
-                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = state.errorMessage ?: "Could not prepare export.",
-                            modifier = Modifier.padding(16.dp),
+        when {
+            state.isLoading -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = colors.primary
+                    )
+                }
+            }
+
+            state.template == null -> {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentPadding = PaddingValues(spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(spacing.md)
+                ) {
+                    item {
+                        SparkCutValidationBanner(
+                            title = "Export unavailable",
+                            message = state.errorMessage ?: "The export screen could not be prepared.",
+                            severity = SparkCutValidationBannerSeverity.Error
+                        )
+                    }
+
+                    item {
+                        SparkCutSecondaryButton(
+                            text = "Go back",
+                            onClick = { onEvent(ExportContract.Event.BackClicked) },
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
                 }
             }
 
-            item {
-                ExportSectionCard(
-                    icon = Icons.Outlined.SettingsSuggest,
-                    title = "Project summary",
-                    subtitle = "What will be used to generate the final video",
+            else -> {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentPadding = PaddingValues(spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(spacing.md)
                 ) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text("Media items: ${state.mediaCount}")
-                        Text("Edited text fields: ${state.textValueCount}")
-                        Text("Transition: ${state.transitionLabel}")
+                    item {
+                        ExportHeaderCard(
+                            template = state.template,
+                            state = state
+                        )
                     }
-                }
-            }
 
-            item {
-                ExportSectionCard(
-                    icon = Icons.Outlined.Speed,
-                    title = "Export preset",
-                    subtitle = "Choose the quality and frame rate for your output",
-                ) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        state.presets.forEach { preset ->
-                            FilterChip(
-                                selected = preset.isSelected,
-                                onClick = {
-                                    onEvent(ExportContract.Event.PresetSelected(preset.id))
-                                },
-                                label = {
-                                    Column {
-                                        Text(preset.label)
-                                        Text(
-                                            text = preset.detail,
-                                            style = MaterialTheme.typography.labelSmall,
-                                        )
-                                    }
-                                },
+                    if (!state.errorMessage.isNullOrBlank()) {
+                        item {
+                            SparkCutValidationBanner(
+                                title = "Export blocked",
+                                message = state.errorMessage,
+                                severity = SparkCutValidationBannerSeverity.Error
                             )
                         }
                     }
-                }
-            }
 
-            item {
-                ExportSectionCard(
-                    icon = Icons.Outlined.Audiotrack,
-                    title = "Soundtrack",
-                    subtitle = "Pick an optional background music track and preview it",
-                ) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Text(
-                            text = when {
-                                state.isLoadingSoundtrackMetadata -> "Reading soundtrack info..."
-                                state.soundtrackErrorMessage != null -> state.soundtrackErrorMessage
-                                state.soundtrackDisplayName != null -> state.soundtrackDisplayName
-                                else -> "No soundtrack selected"
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (state.soundtrackErrorMessage != null) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
-
-                        if (!state.soundtrackDurationLabel.isNullOrBlank() || !state.soundtrackMimeType.isNullOrBlank()) {
+                    item {
+                        ExportSectionCard(
+                            title = "Project summary",
+                            subtitle = "Everything included in the final render.",
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Outlined.SettingsSuggest,
+                                    contentDescription = null,
+                                    tint = colors.textPrimary
+                                )
+                            }
+                        ) {
                             Column(
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalArrangement = Arrangement.spacedBy(spacing.xs)
                             ) {
-                                state.soundtrackDurationLabel?.let { duration ->
-                                    Text(
-                                        text = "Duration: $duration",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
+                                ExportMetaRow("Media items", state.mediaCount.toString())
+                                ExportMetaRow("Edited text fields", state.textValueCount.toString())
+                                ExportMetaRow("Transition", state.transitionLabel)
+                                ExportMetaRow(
+                                    "Aspect ratio",
+                                    state.template.aspectRatioLabel
+                                )
+                            }
+                        }
+                    }
 
-                                state.soundtrackMimeType?.let { mime ->
-                                    Text(
-                                        text = mime,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    item {
+                        ExportSectionCard(
+                            title = "Export preset",
+                            subtitle = "Choose output quality and playback smoothness.",
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Outlined.Speed,
+                                    contentDescription = null,
+                                    tint = colors.textPrimary
+                                )
+                            }
+                        ) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(spacing.sm)
+                            ) {
+                                state.presets.forEach { preset ->
+                                    ExportPresetCard(
+                                        preset = preset,
+                                        onClick = {
+                                            onEvent(ExportContract.Event.PresetSelected(preset.id))
+                                        }
                                     )
                                 }
                             }
                         }
+                    }
 
-                        OutlinedButton(
-                            onClick = { onEvent(ExportContract.Event.PickMusicClicked) },
-                            modifier = Modifier.fillMaxWidth(),
+                    item {
+                        ExportSectionCard(
+                            title = "Soundtrack",
+                            subtitle = "Attach an optional background music track and preview it.",
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Outlined.Audiotrack,
+                                    contentDescription = null,
+                                    tint = colors.textPrimary
+                                )
+                            }
                         ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Audiotrack,
-                                contentDescription = null,
-                            )
-                            Text(
-                                text = if (state.hasBackgroundMusic) {
-                                    "Replace soundtrack"
-                                } else {
-                                    "Pick soundtrack"
-                                },
-                                modifier = Modifier.padding(start = 8.dp),
-                            )
-                        }
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(spacing.sm)
+                            ) {
+                                SparkCutStatusChip(
+                                    text = soundtrackStatusText(state),
+                                    tone = soundtrackStatusTone(state)
+                                )
 
-                        OutlinedButton(
-                            onClick = onToggleMusicPreview,
-                            enabled = state.hasBackgroundMusic &&
-                                    state.soundtrackErrorMessage == null &&
-                                    !state.isLoadingSoundtrackMetadata,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(
-                                imageVector = if (isMusicPreviewPlaying) {
-                                    Icons.Outlined.Pause
-                                } else {
-                                    Icons.Outlined.PlayArrow
-                                },
-                                contentDescription = null,
-                            )
-                            Text(
-                                text = if (isMusicPreviewPlaying) {
-                                    "Pause preview"
-                                } else {
-                                    "Play preview"
-                                },
-                                modifier = Modifier.padding(start = 8.dp),
-                            )
-                        }
+                                Text(
+                                    text = when {
+                                        state.isLoadingSoundtrackMetadata -> "Reading soundtrack metadata..."
+                                        state.soundtrackErrorMessage != null -> state.soundtrackErrorMessage
+                                        state.soundtrackDisplayName != null -> state.soundtrackDisplayName
+                                        else -> "No soundtrack selected"
+                                    },
+                                    style = SparkCutTheme.typography.body,
+                                    color = if (state.soundtrackErrorMessage != null) {
+                                        colors.error
+                                    } else {
+                                        colors.textSecondary
+                                    }
+                                )
 
-                        OutlinedButton(
-                            onClick = { onEvent(ExportContract.Event.ClearMusicClicked) },
-                            enabled = state.hasBackgroundMusic,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Clear,
-                                contentDescription = null,
-                            )
-                            Text(
-                                text = "Clear soundtrack",
-                                modifier = Modifier.padding(start = 8.dp),
-                            )
+                                if (!state.soundtrackDurationLabel.isNullOrBlank() || !state.soundtrackMimeType.isNullOrBlank()) {
+                                    Column(
+                                        verticalArrangement = Arrangement.spacedBy(spacing.xxs)
+                                    ) {
+                                        state.soundtrackDurationLabel?.let { duration ->
+                                            Text(
+                                                text = "Duration: $duration",
+                                                style = SparkCutTheme.typography.meta,
+                                                color = colors.textMuted
+                                            )
+                                        }
+
+                                        state.soundtrackMimeType?.let { mime ->
+                                            Text(
+                                                text = mime,
+                                                style = SparkCutTheme.typography.meta,
+                                                color = colors.textMuted
+                                            )
+                                        }
+                                    }
+                                }
+
+                                SparkCutSecondaryButton(
+                                    text = if (state.hasBackgroundMusic) {
+                                        "Replace soundtrack"
+                                    } else {
+                                        "Pick soundtrack"
+                                    },
+                                    onClick = { onEvent(ExportContract.Event.PickMusicClicked) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    leadingContent = {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Audiotrack,
+                                            contentDescription = null
+                                        )
+                                    }
+                                )
+
+                                SparkCutSecondaryButton(
+                                    text = if (isMusicPreviewPlaying) {
+                                        "Pause preview"
+                                    } else {
+                                        "Play preview"
+                                    },
+                                    onClick = onToggleMusicPreview,
+                                    enabled = state.hasBackgroundMusic &&
+                                            state.soundtrackErrorMessage == null &&
+                                            !state.isLoadingSoundtrackMetadata,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    leadingContent = {
+                                        Icon(
+                                            imageVector = if (isMusicPreviewPlaying) {
+                                                Icons.Outlined.Pause
+                                            } else {
+                                                Icons.Outlined.PlayArrow
+                                            },
+                                            contentDescription = null
+                                        )
+                                    }
+                                )
+
+                                SparkCutSecondaryButton(
+                                    text = "Clear soundtrack",
+                                    onClick = { onEvent(ExportContract.Event.ClearMusicClicked) },
+                                    enabled = state.hasBackgroundMusic,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    leadingContent = {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Clear,
+                                            contentDescription = null
+                                        )
+                                    }
+                                )
+                            }
                         }
                     }
-                }
-            }
 
-            item {
-                ExportSectionCard(
-                    icon = Icons.Outlined.VolumeUp,
-                    title = "Audio mix",
-                    subtitle = "Adjust source audio, soundtrack level, and fade timings",
-                ) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                    ) {
-                        Text(
-                            text = "Clip audio: ${(state.clipAudioVolume * 100).toInt()}%",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Slider(
-                            value = state.clipAudioVolume,
-                            onValueChange = {
-                                onEvent(ExportContract.Event.ClipAudioVolumeChanged(it))
-                            },
-                            valueRange = 0f..1f,
-                        )
-
-                        Text(
-                            text = "Music audio: ${(state.musicAudioVolume * 100).toInt()}%",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Slider(
-                            value = state.musicAudioVolume,
-                            onValueChange = {
-                                onEvent(ExportContract.Event.MusicAudioVolumeChanged(it))
-                            },
-                            valueRange = 0f..1f,
-                        )
-
-                        Text(
-                            text = "Fade in: ${state.fadeInMs} ms",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Slider(
-                            value = state.fadeInMs.toFloat(),
-                            onValueChange = {
-                                onEvent(
-                                    ExportContract.Event.FadeInChanged(it.toLong())
+                    item {
+                        ExportSectionCard(
+                            title = "Audio mix",
+                            subtitle = "Blend source audio and soundtrack levels.",
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Outlined.VolumeUp,
+                                    contentDescription = null,
+                                    tint = colors.textPrimary
                                 )
-                            },
-                            valueRange = 0f..3000f,
-                        )
-
-                        Text(
-                            text = "Fade out: ${state.fadeOutMs} ms",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Slider(
-                            value = state.fadeOutMs.toFloat(),
-                            onValueChange = {
-                                onEvent(
-                                    ExportContract.Event.FadeOutChanged(it.toLong())
+                            }
+                        ) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(spacing.sm)
+                            ) {
+                                ExportSliderBlock(
+                                    title = "Clip audio",
+                                    valueLabel = "${(state.clipAudioVolume * 100).toInt()}%",
+                                    value = state.clipAudioVolume,
+                                    onValueChange = {
+                                        onEvent(ExportContract.Event.ClipAudioVolumeChanged(it))
+                                    },
+                                    valueRange = 0f..1f
                                 )
-                            },
-                            valueRange = 0f..3000f,
-                        )
+
+                                ExportSliderBlock(
+                                    title = "Music audio",
+                                    valueLabel = "${(state.musicAudioVolume * 100).toInt()}%",
+                                    value = state.musicAudioVolume,
+                                    onValueChange = {
+                                        onEvent(ExportContract.Event.MusicAudioVolumeChanged(it))
+                                    },
+                                    valueRange = 0f..1f
+                                )
+
+                                ExportSliderBlock(
+                                    title = "Fade in",
+                                    valueLabel = "${state.fadeInMs} ms",
+                                    value = state.fadeInMs.toFloat(),
+                                    onValueChange = {
+                                        onEvent(ExportContract.Event.FadeInChanged(it.toLong()))
+                                    },
+                                    valueRange = 0f..3000f
+                                )
+
+                                ExportSliderBlock(
+                                    title = "Fade out",
+                                    valueLabel = "${state.fadeOutMs} ms",
+                                    value = state.fadeOutMs.toFloat(),
+                                    onValueChange = {
+                                        onEvent(ExportContract.Event.FadeOutChanged(it.toLong()))
+                                    },
+                                    valueRange = 0f..3000f
+                                )
+                            }
+                        }
                     }
-                }
-            }
 
-            item {
-                ExportSectionCard(
-                    icon = Icons.Outlined.Subtitles,
-                    title = "Output",
-                    subtitle = "Export result and publishing state",
-                ) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text("Status: ${state.statusText}")
+                    item {
+                        ExportSectionCard(
+                            title = "Output",
+                            subtitle = "Track export progress and publishing state.",
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Outlined.Subtitles,
+                                    contentDescription = null,
+                                    tint = colors.textPrimary
+                                )
+                            }
+                        ) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(spacing.sm)
+                            ) {
+                                SparkCutValidationBanner(
+                                    title = exportOutputBannerTitle(state),
+                                    message = exportOutputBannerMessage(state),
+                                    severity = exportOutputBannerSeverity(state)
+                                )
 
-                        state.completedOutputPath?.let {
-                            Text(
-                                text = "Cache output: $it",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                                if (state.isExporting) {
+                                    LinearProgressIndicator(
+                                        progress = { state.progress },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+
+                                    Text(
+                                        text = "${state.progressPercent}% • ${state.statusText}",
+                                        style = SparkCutTheme.typography.meta,
+                                        color = colors.textMuted
+                                    )
+                                }
+
+                                state.completedOutputPath?.let { outputPath ->
+                                    Text(
+                                        text = "Cache output: $outputPath",
+                                        style = SparkCutTheme.typography.meta,
+                                        color = colors.textMuted
+                                    )
+                                }
+
+                                state.publishedMediaUri?.let { publishedUri ->
+                                    SparkCutStatusChip(
+                                        text = "Saved to gallery",
+                                        tone = SparkCutStatusTone.Success
+                                    )
+                                    Text(
+                                        text = publishedUri,
+                                        style = SparkCutTheme.typography.meta,
+                                        color = colors.textMuted
+                                    )
+                                }
+                            }
                         }
+                    }
 
-                        state.publishedMediaUri?.let {
-                            AssistChip(
-                                onClick = {},
-                                enabled = false,
-                                label = { Text("Gallery saved") },
-                            )
-                            Text(
-                                text = it,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                    item {
+                        Spacer(modifier = Modifier.navigationBarsPadding())
                     }
                 }
             }
@@ -554,38 +578,186 @@ fun ExportScreenContent(
 }
 
 @Composable
-private fun TemplateExportHeader(
-    template: ExportContract.TemplateSummary,
+private fun ExportBottomBar(
+    state: ExportContract.State,
+    onStartExport: () -> Unit,
+    onSaveToGallery: () -> Unit,
+    onShare: () -> Unit,
 ) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+    val spacing = SparkCutTheme.spacing
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(
+                horizontal = spacing.md,
+                vertical = spacing.sm
+            )
+    ) {
+        SparkCutCard(
+            modifier = Modifier.fillMaxWidth(),
+            tone = SparkCutCardTone.Elevated
         ) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(spacing.sm)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SparkCutStatusChip(
+                        text = exportBottomBarStatusText(state),
+                        tone = exportBottomBarStatusTone(state)
+                    )
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    Text(
+                        text = if (state.isExporting) {
+                            "${state.progressPercent}%"
+                        } else {
+                            state.statusText
+                        },
+                        style = typography.meta,
+                        color = colors.textMuted
+                    )
+                }
+
+                if (state.isExporting) {
+                    LinearProgressIndicator(
+                        progress = { state.progress },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Text(
+                    text = exportBottomBarSummaryText(state),
+                    style = typography.body,
+                    color = colors.textSecondary
+                )
+
+                SparkCutPrimaryButton(
+                    text = if (state.isExporting) {
+                        "Exporting..."
+                    } else {
+                        "Start export"
+                    },
+                    onClick = onStartExport,
+                    enabled = state.canStartExport,
+                    loading = state.isExporting,
+                    size = SparkCutButtonSize.Large,
+                    modifier = Modifier.fillMaxWidth(),
+                    leadingContent = {
+                        Icon(
+                            imageVector = Icons.Outlined.MovieCreation,
+                            contentDescription = null
+                        )
+                    }
+                )
+
+                if (!state.completedOutputPath.isNullOrBlank()) {
+                    SparkCutSecondaryButton(
+                        text = when {
+                            state.isPublishing -> "Saving to gallery..."
+                            state.publishedMediaUri != null -> "Saved to gallery"
+                            else -> "Save to gallery"
+                        },
+                        onClick = onSaveToGallery,
+                        enabled = state.canSaveToGallery,
+                        loading = state.isPublishing,
+                        modifier = Modifier.fillMaxWidth(),
+                        leadingContent = {
+                            Icon(
+                                imageVector = Icons.Outlined.SaveAlt,
+                                contentDescription = null
+                            )
+                        }
+                    )
+
+                    SparkCutSecondaryButton(
+                        text = "Share video",
+                        onClick = onShare,
+                        enabled = state.canShare,
+                        modifier = Modifier.fillMaxWidth(),
+                        leadingContent = {
+                            Icon(
+                                imageVector = Icons.Outlined.IosShare,
+                                contentDescription = null
+                            )
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExportHeaderCard(
+    template: ExportContract.TemplateSummary,
+    state: ExportContract.State,
+) {
+    val spacing = SparkCutTheme.spacing
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+    val selectedPreset = state.presets.firstOrNull { it.isSelected }
+
+    SparkCutCard(
+        modifier = Modifier.fillMaxWidth(),
+        tone = SparkCutCardTone.Accent
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(spacing.sm)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(spacing.xs)
+            ) {
+                SparkCutStatusChip(
+                    text = template.categoryLabel,
+                    tone = SparkCutStatusTone.Info
+                )
+                SparkCutStatusChip(
+                    text = template.aspectRatioLabel,
+                    tone = SparkCutStatusTone.Neutral
+                )
+                SparkCutStatusChip(
+                    text = selectedPreset?.label ?: "Preset pending",
+                    tone = if (selectedPreset != null) {
+                        SparkCutStatusTone.Success
+                    } else {
+                        SparkCutStatusTone.Warning
+                    }
+                )
+            }
+
             Text(
                 text = template.name,
-                style = MaterialTheme.typography.titleLarge,
+                style = typography.screenTitle,
+                color = colors.textPrimary
             )
 
             Text(
                 text = template.description,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = typography.body,
+                color = colors.textSecondary
             )
 
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(spacing.xs)
             ) {
-                AssistChip(
-                    onClick = {},
-                    enabled = false,
-                    label = { Text(template.categoryLabel) },
+                SparkCutStatusChip(
+                    text = "${state.mediaCount} media",
+                    tone = SparkCutStatusTone.Neutral
                 )
-
-                Text(
-                    text = "Format ${template.aspectRatioLabel}",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
+                SparkCutStatusChip(
+                    text = "${state.textValueCount} text fields",
+                    tone = SparkCutStatusTone.Neutral
+                )
+                SparkCutStatusChip(
+                    text = state.transitionLabel,
+                    tone = SparkCutStatusTone.Accent
                 )
             }
         }
@@ -594,36 +766,257 @@ private fun TemplateExportHeader(
 
 @Composable
 private fun ExportSectionCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     subtitle: String,
+    leadingIcon: @Composable (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+    val spacing = SparkCutTheme.spacing
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+
+    SparkCutCard(
+        modifier = Modifier.fillMaxWidth(),
+        tone = SparkCutCardTone.Elevated
+    ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(spacing.sm)
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-            )
+            if (leadingIcon != null) {
+                Box(
+                    contentAlignment = Alignment.Center
+                ) {
+                    leadingIcon()
+                }
+            }
 
             Column(
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(spacing.xxs)
             ) {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = typography.sectionTitle,
+                    color = colors.textPrimary
                 )
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = typography.body,
+                    color = colors.textSecondary
                 )
             }
 
             content()
         }
+    }
+}
+
+@Composable
+private fun ExportPresetCard(
+    preset: ExportContract.PresetItem,
+    onClick: () -> Unit,
+) {
+    val spacing = SparkCutTheme.spacing
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+
+    SparkCutCard(
+        modifier = Modifier.fillMaxWidth(),
+        tone = if (preset.isSelected) {
+            SparkCutCardTone.Focused
+        } else {
+            SparkCutCardTone.Default
+        },
+        onClick = onClick
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(spacing.sm)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(spacing.xxs)
+                ) {
+                    Text(
+                        text = preset.label,
+                        style = typography.cardTitle,
+                        color = colors.textPrimary
+                    )
+                    Text(
+                        text = preset.detail,
+                        style = typography.meta,
+                        color = colors.textMuted
+                    )
+                }
+
+                FilterChip(
+                    selected = preset.isSelected,
+                    onClick = onClick,
+                    label = {
+                        Text(if (preset.isSelected) "Selected" else "Select")
+                    }
+                )
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(spacing.xs)
+            ) {
+                SparkCutStatusChip(
+                    text = preset.resolution.name.replace('_', ' '),
+                    tone = SparkCutStatusTone.Info
+                )
+                SparkCutStatusChip(
+                    text = preset.fps.name.replace("FPS_", "") + " FPS",
+                    tone = SparkCutStatusTone.Neutral
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExportSliderBlock(
+    title: String,
+    valueLabel: String,
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    valueRange: ClosedFloatingPointRange<Float>,
+) {
+    val spacing = SparkCutTheme.spacing
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(spacing.xs)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = title,
+                style = typography.cardTitle,
+                color = colors.textPrimary
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            Text(
+                text = valueLabel,
+                style = typography.meta,
+                color = colors.textMuted
+            )
+        }
+
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange
+        )
+    }
+}
+
+@Composable
+private fun ExportMetaRow(
+    label: String,
+    value: String,
+) {
+    val typography = SparkCutTheme.typography
+    val colors = SparkCutTheme.colors
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = typography.body,
+            color = colors.textSecondary
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            text = value,
+            style = typography.bodyStrong,
+            color = colors.textPrimary
+        )
+    }
+}
+
+private fun soundtrackStatusText(state: ExportContract.State): String {
+    return when {
+        state.isLoadingSoundtrackMetadata -> "Reading"
+        state.soundtrackErrorMessage != null -> "Invalid"
+        state.hasBackgroundMusic -> "Attached"
+        else -> "Optional"
+    }
+}
+
+private fun soundtrackStatusTone(state: ExportContract.State): SparkCutStatusTone {
+    return when {
+        state.isLoadingSoundtrackMetadata -> SparkCutStatusTone.Info
+        state.soundtrackErrorMessage != null -> SparkCutStatusTone.Error
+        state.hasBackgroundMusic -> SparkCutStatusTone.Success
+        else -> SparkCutStatusTone.Neutral
+    }
+}
+
+private fun exportOutputBannerTitle(state: ExportContract.State): String {
+    return when {
+        state.isExporting -> "Export in progress"
+        !state.errorMessage.isNullOrBlank() -> "Export blocked"
+        !state.publishedMediaUri.isNullOrBlank() -> "Saved to gallery"
+        !state.completedOutputPath.isNullOrBlank() -> "Export completed"
+        state.canStartExport -> "Ready to export"
+        else -> "Review export settings"
+    }
+}
+
+private fun exportOutputBannerMessage(state: ExportContract.State): String {
+    return when {
+        state.isExporting -> "${state.progressPercent}% completed • ${state.statusText}"
+        !state.errorMessage.isNullOrBlank() -> state.errorMessage
+        !state.publishedMediaUri.isNullOrBlank() -> "The exported video has been published and is ready to share."
+        !state.completedOutputPath.isNullOrBlank() -> "The video file is ready. Save it to gallery to enable sharing."
+        state.canStartExport -> "Preset, project data and soundtrack settings are ready."
+        else -> state.statusText.ifBlank { "Complete the remaining export requirements." }
+    }
+}
+
+private fun exportOutputBannerSeverity(state: ExportContract.State): SparkCutValidationBannerSeverity {
+    return when {
+        state.isExporting -> SparkCutValidationBannerSeverity.Info
+        !state.errorMessage.isNullOrBlank() -> SparkCutValidationBannerSeverity.Error
+        state.canStartExport || !state.completedOutputPath.isNullOrBlank() -> SparkCutValidationBannerSeverity.Info
+        else -> SparkCutValidationBannerSeverity.Warning
+    }
+}
+
+private fun exportBottomBarStatusText(state: ExportContract.State): String {
+    return when {
+        state.isExporting -> "Exporting"
+        !state.errorMessage.isNullOrBlank() -> "Blocked"
+        !state.publishedMediaUri.isNullOrBlank() -> "Published"
+        !state.completedOutputPath.isNullOrBlank() -> "Completed"
+        state.canStartExport -> "Ready"
+        else -> "Review"
+    }
+}
+
+private fun exportBottomBarStatusTone(state: ExportContract.State): SparkCutStatusTone {
+    return when {
+        state.isExporting -> SparkCutStatusTone.Info
+        !state.errorMessage.isNullOrBlank() -> SparkCutStatusTone.Error
+        !state.publishedMediaUri.isNullOrBlank() -> SparkCutStatusTone.Success
+        !state.completedOutputPath.isNullOrBlank() -> SparkCutStatusTone.Success
+        state.canStartExport -> SparkCutStatusTone.Success
+        else -> SparkCutStatusTone.Warning
+    }
+}
+
+private fun exportBottomBarSummaryText(state: ExportContract.State): String {
+    return when {
+        state.isExporting -> "${state.progressPercent}% completed • ${state.statusText}"
+        !state.errorMessage.isNullOrBlank() -> state.errorMessage
+        !state.publishedMediaUri.isNullOrBlank() -> "Your export is saved to gallery and ready to share."
+        !state.completedOutputPath.isNullOrBlank() -> "Export finished. Save it to gallery to enable sharing."
+        state.canStartExport -> "Everything looks good. Start export when you are ready."
+        else -> state.statusText.ifBlank { "Check your export configuration before continuing." }
     }
 }

@@ -10,6 +10,19 @@ import kotlinx.coroutines.flow.StateFlow
 interface EditorContract {
 
     @Immutable
+    data class AutosaveState(
+        val status: Status = Status.Idle,
+        val message: String? = null,
+    ) {
+        enum class Status {
+            Idle,
+            Saving,
+            Saved,
+            Error,
+        }
+    }
+
+    @Immutable
     data class State(
         val isLoading: Boolean = true,
         val isResolvingMedia: Boolean = false,
@@ -17,6 +30,9 @@ interface EditorContract {
         val selectedMedia: List<SelectedMediaItem> = emptyList(),
         val textFields: List<TextFieldItem> = emptyList(),
         val transitions: List<TransitionItem> = emptyList(),
+        val validationErrors: List<String> = emptyList(),
+        val validationWarnings: List<String> = emptyList(),
+        val autosaveState: AutosaveState = AutosaveState(),
         val errorMessage: String? = null,
     ) {
         val hasMissingRequiredFields: Boolean
@@ -27,7 +43,8 @@ interface EditorContract {
                     selectedMedia.isNotEmpty() &&
                     !isResolvingMedia &&
                     !hasMissingRequiredFields &&
-                    errorMessage == null
+                    errorMessage == null &&
+                    validationErrors.isEmpty()
     }
 
     @Immutable
@@ -49,6 +66,8 @@ interface EditorContract {
         val fileName: String,
         val durationLabel: String?,
         val resolutionLabel: String?,
+        val width: Int?,
+        val height: Int?,
         val mimeType: String?,
         val sourceDurationMs: Long?,
         val trimStartMs: Long?,

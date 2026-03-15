@@ -34,7 +34,10 @@ import com.muratcangzm.model.template.TransitionPreset
 import com.muratcangzm.templateengine.catalog.TemplateCatalog
 import com.muratcangzm.templateengine.planner.PlannedOverlayGravity
 import com.muratcangzm.templateengine.planner.TemplateRenderPlanner
+import com.muratcangzm.templateengine.render.RenderValidationEngine
+import com.muratcangzm.templateengine.render.RenderValidationSeverity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,6 +60,7 @@ class ExportViewModel(
     private val launchArgs: ExportContract.LaunchArgs,
     private val audioTrackMetadataReader: AudioTrackMetadataReader,
     private val projectSessionManager: ProjectSessionManager,
+    private val renderValidationEngine: RenderValidationEngine,
 ) : ViewModel(), ExportContract.Presenter {
 
     private val _state = MutableStateFlow(ExportContract.State())
@@ -71,6 +75,7 @@ class ExportViewModel(
 
     private var loadedTemplate: TemplateSpec? = null
     private var activeSession: MediaExportSession? = null
+    private var exportStateJob: Job? = null
 
     private val exportPresets: List<ExportPreset> = listOf(
         ExportPreset(
@@ -254,7 +259,9 @@ class ExportViewModel(
         }
 
         val transition = parseTransition(launchArgs.transitionPresetName) ?: TransitionPreset.FADE
-        val persistedProjectId = launchArgs.projectId?.takeIf { it.isNotBlank() }?.let(::ProjectId)
+        val persistedProjectId = launchArgs.projectId
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::ProjectId)
 
         _state.update {
             it.copy(
@@ -322,7 +329,8 @@ class ExportViewModel(
                 } else {
                     val sourceDuration = asset.durationMs ?: 0L
                     val userStart = (clipArg.trimStartMs ?: 0L).coerceIn(0L, sourceDuration)
-                    val userEnd = (clipArg.trimEndMs ?: sourceDuration).coerceIn(userStart, sourceDuration)
+                    val userEnd = (clipArg.trimEndMs ?: sourceDuration)
+                        .coerceIn(userStart, sourceDuration)
                     val effectiveDuration = (userEnd - userStart).coerceAtLeast(300L)
 
                     asset.copy(
@@ -338,6 +346,45 @@ class ExportViewModel(
                 assets = trimmedAssets,
                 textValues = textMap,
             )
+
+            if (persistedProjectId != null) {
+                val session = projectSessionManager.getSession(persistedProjectId)
+                if (session != null) {
+                    val validation = renderValidationEngine.validate(
+                        template = template,
+                        session = session,
+                    )
+
+                    if (!validation.isValid) {
+                        val firstError = validation.issues
+                            .firstOrNull { issue ->
+                                issue.severity == RenderValidationSeverity.ERROR
+                            }
+                            ?.message
+                            ?: "Render validation failed."
+
+                        projectSessionManager.updateStatus(
+                            projectId = persistedProjectId,
+                            status = ProjectStatus.FAILED,
+                            updatedAtEpochMillis = System.currentTimeMillis(),
+                        )
+
+                        _state.update {
+                            it.copy(
+                                isExporting = false,
+                                progress = 0f,
+                                statusText = "Validation failed",
+                                errorMessage = firstError,
+                            )
+                        }
+
+                        _effects.tryEmit(
+                            ExportContract.Effect.ShowMessage(firstError),
+                        )
+                        return@launch
+                    }
+                }
+            }
 
             if (renderPlan.sequenceItems.isEmpty()) {
                 persistedProjectId?.let {
@@ -366,7 +413,7 @@ class ExportViewModel(
                 ?.trim()
                 ?.takeIf { it.isNotBlank() }
 
-            val shouldLoopBackgroundAudio: Boolean = when (template.musicPolicy.trimBehavior) {
+            val shouldLoopBackgroundAudio = when (template.musicPolicy.trimBehavior) {
                 AudioTrimBehavior.LOOP,
                 AudioTrimBehavior.AUTO_FIT -> true
                 else -> false
@@ -450,7 +497,8 @@ class ExportViewModel(
             val session = mediaExportEngine.createSession(request)
             activeSession = session
 
-            viewModelScope.launch {
+            exportStateJob?.cancel()
+            exportStateJob = viewModelScope.launch {
                 session.state.collectLatest { exportState ->
                     when (exportState) {
                         MediaExportState.Idle -> Unit
@@ -466,6 +514,8 @@ class ExportViewModel(
                         }
 
                         is MediaExportState.Completed -> {
+                            activeSession = null
+
                             persistedProjectId?.let {
                                 projectSessionManager.updateStatus(
                                     projectId = it,
@@ -490,6 +540,8 @@ class ExportViewModel(
                         }
 
                         is MediaExportState.Failed -> {
+                            activeSession = null
+
                             persistedProjectId?.let {
                                 projectSessionManager.updateStatus(
                                     projectId = it,
@@ -512,6 +564,8 @@ class ExportViewModel(
                         }
 
                         is MediaExportState.Cancelled -> {
+                            activeSession = null
+
                             persistedProjectId?.let {
                                 projectSessionManager.updateStatus(
                                     projectId = it,
@@ -597,6 +651,10 @@ class ExportViewModel(
     private fun loadSoundtrackMetadata(uri: String) {
         viewModelScope.launch {
             val metadata = audioTrackMetadataReader.read(uri)
+
+            if (_state.value.backgroundMusicUri != uri) {
+                return@launch
+            }
 
             if (metadata == null) {
                 _state.update {
@@ -705,7 +763,10 @@ class ExportViewModel(
             )
         }
 
-        val initialMusicUri = launchArgs.backgroundMusicUri?.trim()?.takeIf { it.isNotBlank() }
+        val initialMusicUri = launchArgs.backgroundMusicUri
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+
         if (initialMusicUri != null) {
             _state.update {
                 it.copy(isLoadingSoundtrackMetadata = true)
@@ -718,6 +779,12 @@ class ExportViewModel(
         enumValues<TransitionPreset>().firstOrNull { preset ->
             preset.name.equals(raw, ignoreCase = true)
         }
+
+    override fun onCleared() {
+        exportStateJob?.cancel()
+        activeSession = null
+        super.onCleared()
+    }
 }
 
 private fun ExportPreset.toUi(

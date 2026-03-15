@@ -16,6 +16,7 @@ val exportModule = module {
             launchArgs = launchArgs,
             audioTrackMetadataReader = get(),
             projectSessionManager = get(),
+            renderValidationEngine = get(),
         )
     }
 }

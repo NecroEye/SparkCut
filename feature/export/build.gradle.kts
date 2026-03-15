@@ -68,8 +68,6 @@ dependencies {
     implementation(libs.androidx.media3.transformer)
     implementation(libs.androidx.media3.effect)
 
-    implementation(libs.androidx.media3.exoplayer)
-
     implementation(platform(libs.koin.bom))
     implementation(libs.koin.android)
     implementation(libs.koin.androidx.compose)

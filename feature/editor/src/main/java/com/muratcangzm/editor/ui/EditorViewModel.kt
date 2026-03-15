@@ -23,6 +23,9 @@ import com.muratcangzm.model.template.TemplateCategory
 import com.muratcangzm.model.template.TemplateSpec
 import com.muratcangzm.model.template.TransitionPreset
 import com.muratcangzm.templateengine.catalog.TemplateCatalog
+import com.muratcangzm.templateengine.render.RenderValidationEngine
+import com.muratcangzm.templateengine.render.RenderValidationResult
+import com.muratcangzm.templateengine.render.RenderValidationSeverity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
@@ -44,6 +47,7 @@ class EditorViewModel(
     private val mediaUrisArg: List<String>,
     private val projectSessionManager: ProjectSessionManager,
     private val projectIdArg: String?,
+    private val renderValidationEngine: RenderValidationEngine,
 ) : ViewModel(), EditorContract.Presenter {
 
     private val _state = MutableStateFlow(EditorContract.State())
@@ -57,11 +61,13 @@ class EditorViewModel(
     override val effects: SharedFlow<EditorContract.Effect> = _effects.asSharedFlow()
 
     private var loadedTemplate: TemplateSpec? = null
-    private var currentProjectId: ProjectId? = projectIdArg?.takeIf { it.isNotBlank() }?.let(::ProjectId)
+    private var currentProjectId: ProjectId? =
+        projectIdArg?.takeIf { it.isNotBlank() }?.let(::ProjectId)
     private var createdAtEpochMillis: Long? = null
     private var currentProjectName: String? = null
     private val persistedAssetIdsByUri = linkedMapOf<String, MediaAssetId>()
     private var autosaveJob: Job? = null
+    private var autosaveStatusResetJob: Job? = null
 
     init {
         if (currentProjectId != null) {
@@ -179,7 +185,31 @@ class EditorViewModel(
                     ?: template.defaultTransition
 
                 viewModelScope.launch {
-                    persistCurrentSession()
+                    val validationResult = runCatching {
+                        persistCurrentSession(
+                            markSavingState = true,
+                            throwOnFailure = true,
+                        )
+                    }.getOrElse { throwable ->
+                        _effects.tryEmit(
+                            EditorContract.Effect.ShowMessage(
+                                throwable.message ?: "Project could not be saved before export."
+                            )
+                        )
+                        return@launch
+                    }
+
+                    if (validationResult?.hasErrors == true) {
+                        _effects.tryEmit(
+                            EditorContract.Effect.ShowMessage(
+                                validationResult.issues
+                                    .firstOrNull { it.severity == RenderValidationSeverity.ERROR }
+                                    ?.message
+                                    ?: "Project validation failed."
+                            )
+                        )
+                        return@launch
+                    }
 
                     _effects.tryEmit(
                         EditorContract.Effect.NavigateExport(
@@ -220,6 +250,9 @@ class EditorViewModel(
                 it.copy(
                     isLoading = false,
                     errorMessage = "Invalid template id.",
+                    validationErrors = emptyList(),
+                    validationWarnings = emptyList(),
+                    autosaveState = EditorContract.AutosaveState(),
                 )
             }
             return
@@ -231,6 +264,9 @@ class EditorViewModel(
                 it.copy(
                     isLoading = false,
                     errorMessage = "Template not found.",
+                    validationErrors = emptyList(),
+                    validationWarnings = emptyList(),
+                    autosaveState = EditorContract.AutosaveState(),
                 )
             }
             return
@@ -264,6 +300,9 @@ class EditorViewModel(
                 template = template.toSummary(),
                 textFields = textFields,
                 transitions = transitions,
+                validationErrors = emptyList(),
+                validationWarnings = emptyList(),
+                autosaveState = EditorContract.AutosaveState(),
                 errorMessage = null,
             )
         }
@@ -279,6 +318,9 @@ class EditorViewModel(
                     it.copy(
                         isLoading = false,
                         errorMessage = "Saved project could not be loaded.",
+                        validationErrors = emptyList(),
+                        validationWarnings = emptyList(),
+                        autosaveState = EditorContract.AutosaveState(),
                     )
                 }
                 return@launch
@@ -290,6 +332,9 @@ class EditorViewModel(
                     it.copy(
                         isLoading = false,
                         errorMessage = "Template for saved project no longer exists.",
+                        validationErrors = emptyList(),
+                        validationWarnings = emptyList(),
+                        autosaveState = EditorContract.AutosaveState(),
                     )
                 }
                 return@launch
@@ -325,6 +370,8 @@ class EditorViewModel(
                         } else {
                             null
                         },
+                        width = asset.width,
+                        height = asset.height,
                         mimeType = asset.mimeType,
                         sourceDurationMs = asset.durationMs,
                         trimStartMs = binding.trimStartMs,
@@ -367,10 +414,12 @@ class EditorViewModel(
                     selectedMedia = selectedMedia,
                     textFields = textFields,
                     transitions = transitions,
+                    autosaveState = EditorContract.AutosaveState(),
                     errorMessage = null,
                 )
             }
 
+            validateCurrentSession(session)
             projectSessionManager.setLastActive(projectId)
         }
     }
@@ -392,6 +441,9 @@ class EditorViewModel(
                 it.copy(
                     isResolvingMedia = false,
                     selectedMedia = emptyList(),
+                    validationErrors = emptyList(),
+                    validationWarnings = emptyList(),
+                    autosaveState = EditorContract.AutosaveState(),
                     errorMessage = "No media received from create flow.",
                 )
             }
@@ -545,111 +597,215 @@ class EditorViewModel(
 
     private fun scheduleAutosave() {
         autosaveJob?.cancel()
-        autosaveJob = viewModelScope.launch {
-            delay(500L)
-            persistCurrentSession()
-        }
-    }
+        autosaveStatusResetJob?.cancel()
 
-    private suspend fun persistCurrentSession() {
-        val template = loadedTemplate ?: return
         val current = _state.value
         if (current.isLoading || current.isResolvingMedia) return
 
-        val now = System.currentTimeMillis()
-        val projectId = currentProjectId ?: ProjectId(UUID.randomUUID().toString()).also {
-            currentProjectId = it
+        markAutosaveSaving()
+
+        autosaveJob = viewModelScope.launch {
+            delay(500L)
+            persistCurrentSession(markSavingState = false)
         }
-        val createdAt = createdAtEpochMillis ?: now
-        createdAtEpochMillis = createdAt
+    }
 
-        val orderedSlots = template.slots.sortedBy { it.index }
+    private suspend fun persistCurrentSession(
+        markSavingState: Boolean = true,
+        throwOnFailure: Boolean = false,
+    ): RenderValidationResult? {
+        val template = loadedTemplate ?: return null
+        val current = _state.value
+        if (current.isLoading || current.isResolvingMedia) return null
 
-        val mediaAssets = current.selectedMedia.map { item ->
-            val existingId = persistedAssetIdsByUri[item.uri]
-            val resolvedId = existingId ?: MediaAssetId(UUID.randomUUID().toString()).also {
-                persistedAssetIdsByUri[item.uri] = it
+        if (markSavingState) {
+            markAutosaveSaving()
+        }
+
+        return try {
+            val now = System.currentTimeMillis()
+            val projectId = currentProjectId ?: ProjectId(UUID.randomUUID().toString()).also {
+                currentProjectId = it
+            }
+            val createdAt = createdAtEpochMillis ?: now
+            createdAtEpochMillis = createdAt
+
+            val orderedSlots = template.slots.sortedBy { it.index }
+
+            val mediaAssets = current.selectedMedia.map { item ->
+                val existingId = persistedAssetIdsByUri[item.uri]
+                val resolvedId = existingId ?: MediaAssetId(UUID.randomUUID().toString()).also {
+                    persistedAssetIdsByUri[item.uri] = it
+                }
+
+                ProjectMediaAssetRef(
+                    id = resolvedId,
+                    sourceUri = item.uri,
+                    fileName = item.fileName,
+                    mimeType = item.mimeType,
+                    width = item.width,
+                    height = item.height,
+                    durationMs = item.sourceDurationMs,
+                )
             }
 
-            val width = item.resolutionLabel?.substringBefore("×")?.toIntOrNull()
-            val height = item.resolutionLabel?.substringAfter("×")?.toIntOrNull()
+            val slotBindings = current.selectedMedia.mapIndexedNotNull { index, item ->
+                val slot = orderedSlots.getOrNull(index) ?: return@mapIndexedNotNull null
+                val assetId = persistedAssetIdsByUri[item.uri] ?: return@mapIndexedNotNull null
 
-            ProjectMediaAssetRef(
-                id = resolvedId,
-                sourceUri = item.uri,
-                fileName = item.fileName,
-                mimeType = item.mimeType,
-                width = width,
-                height = height,
-                durationMs = item.sourceDurationMs,
-            )
-        }
-
-        val slotBindings = current.selectedMedia.mapIndexedNotNull { index, item ->
-            val slot = orderedSlots.getOrNull(index) ?: return@mapIndexedNotNull null
-            val assetId = persistedAssetIdsByUri[item.uri] ?: return@mapIndexedNotNull null
-
-            ProjectSlotBinding(
-                slotId = slot.id,
-                mediaAssetId = assetId,
-                order = index,
-                trimStartMs = item.trimStartMs,
-                trimEndMs = item.trimEndMs,
-            )
-        }
-
-        val selectedTransition = current.transitions.firstOrNull { it.isSelected }?.preset
-        val firstSlot = orderedSlots.firstOrNull()
-
-        val transitionOverrides = if (selectedTransition != null && firstSlot != null) {
-            listOf(
-                ProjectTransitionOverride(
-                    slotId = firstSlot.id,
-                    transition = selectedTransition,
+                ProjectSlotBinding(
+                    slotId = slot.id,
+                    mediaAssetId = assetId,
+                    order = index,
+                    trimStartMs = item.trimStartMs,
+                    trimEndMs = item.trimEndMs,
                 )
-            )
-        } else {
-            emptyList()
-        }
+            }
 
-        val hasMissingRequired = current.textFields.any { it.required && it.value.isBlank() }
-        val status = when {
-            slotBindings.isEmpty() -> ProjectStatus.DRAFT
-            hasMissingRequired -> ProjectStatus.DRAFT
-            else -> ProjectStatus.READY
-        }
+            val selectedTransition = current.transitions.firstOrNull { it.isSelected }?.preset
+            val firstSlot = orderedSlots.firstOrNull()
 
-        val draft = ProjectDraft(
-            id = projectId,
-            name = currentProjectName ?: template.name,
-            templateId = template.id,
-            aspectRatio = template.aspectRatio,
-            slotBindings = slotBindings,
-            textValues = current.textFields.map {
-                ProjectTextValue(
-                    fieldId = it.id,
-                    value = it.value,
+            val transitionOverrides = if (selectedTransition != null && firstSlot != null) {
+                listOf(
+                    ProjectTransitionOverride(
+                        slotId = firstSlot.id,
+                        transition = selectedTransition,
+                    )
                 )
-            },
-            transitionOverrides = transitionOverrides,
-            audioSelection = ProjectAudioSelection(),
-            coverMediaAssetId = mediaAssets.firstOrNull()?.id,
-            status = status,
-            createdAtEpochMillis = createdAt,
-            updatedAtEpochMillis = now,
-        )
+            } else {
+                emptyList()
+            }
 
-        projectSessionManager.saveSession(
-            session = ProjectEditorSession(
+            val hasMissingRequired = current.textFields.any { it.required && it.value.isBlank() }
+            val status = when {
+                slotBindings.isEmpty() -> ProjectStatus.DRAFT
+                hasMissingRequired -> ProjectStatus.DRAFT
+                else -> ProjectStatus.READY
+            }
+
+            val draft = ProjectDraft(
+                id = projectId,
+                name = currentProjectName ?: template.name,
+                templateId = template.id,
+                aspectRatio = template.aspectRatio,
+                slotBindings = slotBindings,
+                textValues = current.textFields.map {
+                    ProjectTextValue(
+                        fieldId = it.id,
+                        value = it.value,
+                    )
+                },
+                transitionOverrides = transitionOverrides,
+                audioSelection = ProjectAudioSelection(),
+                coverMediaAssetId = mediaAssets.firstOrNull()?.id,
+                status = status,
+                createdAtEpochMillis = createdAt,
+                updatedAtEpochMillis = now,
+            )
+
+            val session = ProjectEditorSession(
                 draft = draft,
                 mediaAssets = mediaAssets,
-            ),
-            setActive = true,
+            )
+
+            projectSessionManager.saveSession(
+                session = session,
+                setActive = true,
+            )
+
+            val validationResult = validateCurrentSession(session)
+            markAutosaveSaved()
+            validationResult
+        } catch (throwable: Throwable) {
+            val message = throwable.message ?: "Project changes could not be saved."
+            markAutosaveError(message)
+            if (throwOnFailure) throw throwable
+            null
+        }
+    }
+
+    private fun validateCurrentSession(
+        session: ProjectEditorSession,
+    ): RenderValidationResult {
+        val template = loadedTemplate ?: return RenderValidationResult(emptyList())
+
+        val result = renderValidationEngine.validate(
+            template = template,
+            session = session,
         )
+
+        _state.update {
+            it.copy(
+                validationErrors = result.issues
+                    .filter { issue -> issue.severity == RenderValidationSeverity.ERROR }
+                    .map { issue -> issue.message },
+                validationWarnings = result.issues
+                    .filter { issue -> issue.severity == RenderValidationSeverity.WARNING }
+                    .map { issue -> issue.message },
+            )
+        }
+
+        return result
+    }
+
+    private fun markAutosaveSaving() {
+        autosaveStatusResetJob?.cancel()
+
+        _state.update {
+            it.copy(
+                autosaveState = EditorContract.AutosaveState(
+                    status = EditorContract.AutosaveState.Status.Saving,
+                    message = "Saving changes..."
+                )
+            )
+        }
+    }
+
+    private fun markAutosaveSaved() {
+        autosaveStatusResetJob?.cancel()
+
+        _state.update {
+            it.copy(
+                autosaveState = EditorContract.AutosaveState(
+                    status = EditorContract.AutosaveState.Status.Saved,
+                    message = "All changes saved"
+                )
+            )
+        }
+
+        autosaveStatusResetJob = viewModelScope.launch {
+            delay(1800L)
+
+            val currentStatus = _state.value.autosaveState.status
+            if (currentStatus == EditorContract.AutosaveState.Status.Saved) {
+                _state.update {
+                    it.copy(
+                        autosaveState = EditorContract.AutosaveState(
+                            status = EditorContract.AutosaveState.Status.Idle,
+                            message = "Auto-save is enabled"
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun markAutosaveError(message: String) {
+        autosaveStatusResetJob?.cancel()
+
+        _state.update {
+            it.copy(
+                autosaveState = EditorContract.AutosaveState(
+                    status = EditorContract.AutosaveState.Status.Error,
+                    message = message
+                )
+            )
+        }
     }
 
     override fun onCleared() {
         autosaveJob?.cancel()
+        autosaveStatusResetJob?.cancel()
         super.onCleared()
     }
 }
@@ -689,6 +845,8 @@ private fun MediaAsset.toUi(
         } else {
             null
         },
+        width = width,
+        height = height,
         mimeType = mimeType,
         sourceDurationMs = durationMs,
         trimStartMs = if (type == MediaType.VIDEO) 0L else null,
