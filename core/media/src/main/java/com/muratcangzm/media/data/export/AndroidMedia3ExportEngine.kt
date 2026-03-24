@@ -32,6 +32,7 @@ import com.muratcangzm.media.domain.export.MediaExportState
 import com.muratcangzm.media.domain.export.MediaTransitionPhase
 import com.muratcangzm.media.domain.export.MediaTransitionWindow
 import com.muratcangzm.model.export.AudioCodec
+import com.muratcangzm.model.export.ExportFps
 import com.muratcangzm.model.export.VideoCodec
 import com.muratcangzm.model.media.MediaType
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -196,9 +197,18 @@ private class AndroidMedia3ExportSession(
             transitions = request.transitionWindows,
         )
 
-        val videoSequenceBuilder = EditedMediaItemSequence.Builder(
-            setOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO),
-        )
+        val hasAnyVideoClipWithAudio =
+            request.audioMix.preserveOriginalClipAudio &&
+                    segmentedItems.any { it.mediaType == MediaType.VIDEO }
+
+        val primaryTrackTypes = buildSet {
+            add(C.TRACK_TYPE_VIDEO)
+            if (hasAnyVideoClipWithAudio) {
+                add(C.TRACK_TYPE_AUDIO)
+            }
+        }
+
+        val videoSequenceBuilder = EditedMediaItemSequence.Builder(primaryTrackTypes)
 
         segmentedItems.forEach { segment ->
             val mediaItem = when (segment.mediaType) {
@@ -230,9 +240,11 @@ private class AndroidMedia3ExportSession(
                     ?.let(::add)
             }
 
-            val clipAudioProcessors = Media3AudioProcessorFactory.createClipAudioProcessors(
-                request.audioMix,
-            )
+            val clipAudioProcessors = if (segment.mediaType == MediaType.VIDEO) {
+                Media3AudioProcessorFactory.createClipAudioProcessors(request.audioMix)
+            } else {
+                emptyList()
+            }
 
             val editedMediaItemBuilder = EditedMediaItem.Builder(mediaItem)
                 .setEffects(
@@ -242,7 +254,11 @@ private class AndroidMedia3ExportSession(
                     ),
                 )
 
-            if (!request.audioMix.preserveOriginalClipAudio) {
+            if (segment.mediaType == MediaType.IMAGE) {
+                editedMediaItemBuilder.setFrameRate(request.preset.fps.toFrameRate())
+            }
+
+            if (segment.mediaType == MediaType.VIDEO && !request.audioMix.preserveOriginalClipAudio) {
                 editedMediaItemBuilder.setRemoveAudio(true)
             }
 
@@ -326,6 +342,12 @@ private class AndroidMedia3ExportSession(
 
     private fun AudioCodec.toAudioMimeType(): String = when (this) {
         AudioCodec.AAC -> MimeTypes.AUDIO_AAC
+    }
+
+    private fun ExportFps.toFrameRate(): Int = when (this) {
+        ExportFps.FPS_24 -> 24
+        ExportFps.FPS_30 -> 30
+        ExportFps.FPS_60 -> 60
     }
 
     private data class TimedSegment(

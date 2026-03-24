@@ -1,5 +1,6 @@
 package com.muratcangzm.export.ui
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.muratcangzm.data.projectsession.ProjectSessionManager
@@ -494,7 +495,40 @@ class ExportViewModel(
                 outputFileBaseName = template.name,
             )
 
-            val session = mediaExportEngine.createSession(request)
+            val sessionResult = runCatching {
+                mediaExportEngine.createSession(request)
+            }
+
+            val session = sessionResult.getOrElse { throwable ->
+                Log.e("SparkCutExport", "createSession failed", throwable)
+
+                persistedProjectId?.let {
+                    projectSessionManager.updateStatus(
+                        projectId = it,
+                        status = ProjectStatus.FAILED,
+                        updatedAtEpochMillis = System.currentTimeMillis(),
+                    )
+                }
+
+                activeSession = null
+
+                _state.update {
+                    it.copy(
+                        isExporting = false,
+                        progress = 0f,
+                        statusText = "Export failed",
+                        errorMessage = throwable.message ?: "Export session could not be created.",
+                    )
+                }
+
+                _effects.tryEmit(
+                    ExportContract.Effect.ShowMessage(
+                        throwable.message ?: "Export session could not be created."
+                    )
+                )
+                return@launch
+            }
+
             activeSession = session
 
             exportStateJob?.cancel()
@@ -589,7 +623,36 @@ class ExportViewModel(
                 }
             }
 
-            session.start()
+            runCatching {
+                session.start()
+            }.onFailure { throwable ->
+                Log.e("SparkCutExport", "session.start failed", throwable)
+
+                persistedProjectId?.let {
+                    projectSessionManager.updateStatus(
+                        projectId = it,
+                        status = ProjectStatus.FAILED,
+                        updatedAtEpochMillis = System.currentTimeMillis(),
+                    )
+                }
+
+                activeSession = null
+
+                _state.update {
+                    it.copy(
+                        isExporting = false,
+                        progress = 0f,
+                        statusText = "Export failed",
+                        errorMessage = throwable.message ?: "Export failed before it could start.",
+                    )
+                }
+
+                _effects.tryEmit(
+                    ExportContract.Effect.ShowMessage(
+                        throwable.message ?: "Export failed before it could start."
+                    )
+                )
+            }
         }
     }
 
@@ -782,6 +845,7 @@ class ExportViewModel(
 
     override fun onCleared() {
         exportStateJob?.cancel()
+        activeSession?.cancel()
         activeSession = null
         super.onCleared()
     }
