@@ -6,16 +6,13 @@ import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDe
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
-import com.muratcangzm.create.ui.CreateScreen
 import com.muratcangzm.editor.ui.EditorContract
 import com.muratcangzm.editor.ui.EditorScreen
 import com.muratcangzm.export.ui.ExportContract
 import com.muratcangzm.export.ui.ExportScreen
 import com.muratcangzm.home.ui.HomeScreen
 import com.muratcangzm.projects.ui.ProjectsScreen
-import com.muratcangzm.template.ui.TemplateScreen
-import org.koin.compose.viewmodel.koinViewModel
-import org.koin.core.parameter.parametersOf
+import com.muratcangzm.settings.ui.SettingsScreen
 
 @Composable
 fun SparkCutNavHost(
@@ -25,14 +22,28 @@ fun SparkCutNavHost(
         entryProvider {
             entry<HomeRoute> {
                 HomeScreen(
-                    onOpenCategory = { _ ->
-                        navigator.goToTemplates()
+                    onOpenEditor = { mediaUris ->
+                        navigator.goToEditor(
+                            mediaUris = mediaUris,
+                            projectId = null,
+                        )
                     },
-                    onOpenCreate = { templateId ->
-                        navigator.goToCreate(templateId)
+                    onOpenProject = { projectId ->
+                        navigator.goToEditor(
+                            mediaUris = emptyList(),
+                            projectId = projectId,
+                        )
                     },
-                    onOpenTemplateBrowser = {
-                        navigator.goToTemplates()
+                    onOpenSettings = {
+                        navigator.goToSettings()
+                    },
+                )
+            }
+
+            entry<SettingsRoute> {
+                SettingsScreen(
+                    onBack = {
+                        navigator.pop()
                     },
                 )
             }
@@ -41,7 +52,6 @@ fun SparkCutNavHost(
                 ProjectsScreen(
                     onOpenProject = { projectId ->
                         navigator.goToEditor(
-                            templateId = null,
                             mediaUris = emptyList(),
                             projectId = projectId,
                         )
@@ -49,45 +59,10 @@ fun SparkCutNavHost(
                 )
             }
 
-            entry<TemplatesRoute> {
-                TemplateScreen(
-                    onBack = {
-                        navigator.pop()
-                    },
-                    onOpenCreate = { templateId ->
-                        navigator.goToCreate(templateId)
-                    },
-                )
-            }
-
-            entry<CreateRoute> { key ->
-                CreateScreen(
-                    templateId = key.templateId,
-                    onBack = {
-                        navigator.pop()
-                    },
-                    onOpenEditor = { templateId, mediaUris ->
-                        navigator.goToEditor(
-                            templateId = templateId,
-                            mediaUris = mediaUris,
-                            projectId = null,
-                        )
-                    },
-                )
-            }
-
             entry<EditorRoute> { key ->
-                val viewModel = koinViewModel<com.muratcangzm.editor.ui.EditorViewModel> {
-                    parametersOf(
-                        key.templateId,
-                        key.mediaUris,
-                        key.projectId,
-                    )
-                }
-
                 EditorScreen(
-                    templateId = key.templateId.orEmpty(),
                     mediaUris = key.mediaUris,
+                    projectId = key.projectId,
                     onBack = {
                         navigator.pop()
                     },
@@ -111,10 +86,10 @@ fun SparkCutNavHost(
                                 },
                                 transitionPresetName = payload.transition.name,
                                 aspectRatioLabel = payload.aspectRatioLabel,
+                                backgroundMusicUri = payload.backgroundMusicUri,
                             )
                         )
                     },
-                    viewModel = viewModel,
                 )
             }
 

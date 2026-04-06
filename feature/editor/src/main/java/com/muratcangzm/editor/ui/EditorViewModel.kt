@@ -1,5 +1,6 @@
 package com.muratcangzm.editor.ui
 
+import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.muratcangzm.data.projectsession.ProjectSessionManager
@@ -10,6 +11,7 @@ import com.muratcangzm.model.id.ProjectId
 import com.muratcangzm.model.id.TemplateId
 import com.muratcangzm.model.media.MediaAsset
 import com.muratcangzm.model.media.MediaType
+import com.muratcangzm.model.project.AudioSourceKind
 import com.muratcangzm.model.project.ProjectAudioSelection
 import com.muratcangzm.model.project.ProjectDraft
 import com.muratcangzm.model.project.ProjectEditorSession
@@ -19,17 +21,12 @@ import com.muratcangzm.model.project.ProjectStatus
 import com.muratcangzm.model.project.ProjectTextValue
 import com.muratcangzm.model.project.ProjectTransitionOverride
 import com.muratcangzm.model.template.AspectRatio
-import com.muratcangzm.model.template.TemplateCategory
-import com.muratcangzm.model.template.TemplateSpec
 import com.muratcangzm.model.template.TransitionPreset
-import com.muratcangzm.templateengine.catalog.TemplateCatalog
-import com.muratcangzm.templateengine.render.RenderValidationEngine
-import com.muratcangzm.templateengine.render.RenderValidationResult
-import com.muratcangzm.templateengine.render.RenderValidationSeverity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -41,13 +38,11 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 class EditorViewModel(
-    private val templateCatalog: TemplateCatalog,
     private val mediaAssetResolver: MediaAssetResolver,
-    private val templateIdArg: String?,
     private val mediaUrisArg: List<String>,
     private val projectSessionManager: ProjectSessionManager,
     private val projectIdArg: String?,
-    private val renderValidationEngine: RenderValidationEngine,
+    private val applicationContext: android.content.Context,
 ) : ViewModel(), EditorContract.Presenter {
 
     private val _state = MutableStateFlow(EditorContract.State())
@@ -60,23 +55,19 @@ class EditorViewModel(
     )
     override val effects: SharedFlow<EditorContract.Effect> = _effects.asSharedFlow()
 
-    private var loadedTemplate: TemplateSpec? = null
     private var currentProjectId: ProjectId? =
         projectIdArg?.takeIf { it.isNotBlank() }?.let(::ProjectId)
     private var createdAtEpochMillis: Long? = null
-    private var currentProjectName: String? = null
     private val persistedAssetIdsByUri = linkedMapOf<String, MediaAssetId>()
     private var autosaveJob: Job? = null
     private var autosaveStatusResetJob: Job? = null
+    private var photoTimerJob: Job? = null
 
     init {
         if (currentProjectId != null) {
             loadPersistedProject(currentProjectId!!)
         } else {
-            loadTemplate(
-                templateIdArg = templateIdArg,
-                mediaUrisArg = mediaUrisArg,
-            )
+            resolveMediaFromUris(mediaUrisArg)
         }
     }
 
@@ -89,225 +80,360 @@ class EditorViewModel(
                 }
             }
 
-            is EditorContract.Event.TextChanged -> {
-                _state.update { current ->
-                    current.copy(
-                        textFields = current.textFields.map { item ->
-                            if (item.id == event.fieldId) {
-                                item.copy(value = event.value.take(item.maxLength))
-                            } else {
-                                item
-                            }
+            EditorContract.Event.TogglePlayPause -> {
+                val current = _state.value
+                if (current.selectedMedia.isEmpty()) return
+                if (current.isPlaying) {
+                    _state.update { it.copy(isPlaying = false) }
+                    _effects.tryEmit(EditorContract.Effect.PausePlayer)
+                    photoTimerJob?.cancel()
+                } else {
+                    val clipIndex = current.currentClipIndex
+                    val clip = current.selectedMedia.getOrNull(clipIndex)
+                    if (clip != null) {
+                        if (clip.isVideo) {
+                            _effects.tryEmit(
+                                EditorContract.Effect.PreparePlayer(
+                                    clipIndex,
+                                    current.currentClipLocalPositionMs,
+                                )
+                            )
+                            _state.update { it.copy(isPlaying = true) }
+                            _effects.tryEmit(EditorContract.Effect.StartPlayer)
+                        } else {
+                            _state.update { it.copy(isPlaying = true) }
+                            startPhotoTimer(clipIndex)
                         }
+                    }
+                }
+            }
+
+            is EditorContract.Event.SeekTo -> {
+                val total = _state.value.totalDurationMs
+                val clamped = event.positionMs.coerceIn(0L, total)
+                val (clipIndex, localPos) = resolveClipForGlobalPosition(clamped)
+                _state.update {
+                    it.copy(
+                        playbackPositionMs = clamped,
+                        currentClipIndex = clipIndex,
+                        currentClipLocalPositionMs = localPos,
+                        isPlaying = false,
                     )
+                }
+                _effects.tryEmit(EditorContract.Effect.PausePlayer)
+                _effects.tryEmit(EditorContract.Effect.PreparePlayer(clipIndex, localPos))
+            }
+
+            EditorContract.Event.SeekBack -> {
+                val newPos = (_state.value.playbackPositionMs - 1_000L).coerceAtLeast(0L)
+                onEvent(EditorContract.Event.SeekTo(newPos))
+            }
+
+            EditorContract.Event.SeekForward -> {
+                val newPos = (_state.value.playbackPositionMs + 1_000L)
+                    .coerceAtMost(_state.value.totalDurationMs)
+                onEvent(EditorContract.Event.SeekTo(newPos))
+            }
+
+            EditorContract.Event.ToggleMute -> {
+                _state.update { it.copy(isMuted = !it.isMuted) }
+            }
+
+            is EditorContract.Event.PlaybackPositionUpdate -> {
+                val clipIndex = _state.value.currentClipIndex
+                val clips = _state.value.selectedMedia
+                if (clipIndex !in clips.indices) return
+                val globalOffset = clips.take(clipIndex).fold(0L) { acc, c -> acc + c.effectiveDurationMs }
+                val globalPos = globalOffset + event.positionMs
+                _state.update {
+                    it.copy(
+                        playbackPositionMs = globalPos.coerceIn(0L, it.totalDurationMs),
+                        currentClipLocalPositionMs = event.positionMs,
+                    )
+                }
+            }
+
+            is EditorContract.Event.PlayerClipFinished -> {
+                photoTimerJob?.cancel()
+                val clips = _state.value.selectedMedia
+                val nextIndex = event.clipIndex + 1
+                if (nextIndex < clips.size) {
+                    val nextClip = clips[nextIndex]
+                    _state.update {
+                        it.copy(
+                            currentClipIndex = nextIndex,
+                            currentClipLocalPositionMs = 0L,
+                        )
+                    }
+                    if (nextClip.isVideo) {
+                        _effects.tryEmit(EditorContract.Effect.PreparePlayer(nextIndex, 0L))
+                        if (_state.value.isPlaying) {
+                            _effects.tryEmit(EditorContract.Effect.StartPlayer)
+                        }
+                    } else if (_state.value.isPlaying) {
+                        startPhotoTimer(nextIndex)
+                    }
+                } else {
+                    _state.update {
+                        it.copy(
+                            isPlaying = false,
+                            playbackPositionMs = 0L,
+                            currentClipIndex = 0,
+                            currentClipLocalPositionMs = 0L,
+                        )
+                    }
+                    _effects.tryEmit(EditorContract.Effect.PausePlayer)
+                    _effects.tryEmit(EditorContract.Effect.PreparePlayer(0, 0L))
+                }
+            }
+
+            is EditorContract.Event.ToolbarTabSelected -> {
+                _state.update {
+                    if (it.activeToolbarTab == event.tab) {
+                        it.copy(activeToolbarTab = null, showCaptionsPanel = false, showAutoCaptionsSheet = false)
+                    } else {
+                        it.copy(
+                            activeToolbarTab = event.tab,
+                            showCaptionsPanel = event.tab == EditorContract.ToolbarTab.Captions,
+                            showAutoCaptionsSheet = false,
+                        )
+                    }
+                }
+            }
+
+            EditorContract.Event.DismissToolbarPanel -> {
+                _state.update {
+                    it.copy(activeToolbarTab = null, showCaptionsPanel = false, showAutoCaptionsSheet = false)
+                }
+            }
+
+            EditorContract.Event.ShowCaptionsPanel -> {
+                _state.update {
+                    it.copy(showCaptionsPanel = true, activeToolbarTab = EditorContract.ToolbarTab.Captions)
+                }
+            }
+
+            EditorContract.Event.DismissCaptionsPanel -> {
+                _state.update { it.copy(showCaptionsPanel = false, showAutoCaptionsSheet = false) }
+            }
+
+            is EditorContract.Event.CaptionsOptionSelected -> {
+                when (event.option) {
+                    EditorContract.CaptionsOption.AutoCaptions ->
+                        _state.update { it.copy(showAutoCaptionsSheet = true) }
+                    EditorContract.CaptionsOption.AddCaptions -> addEmptyCaption()
+                    else -> _effects.tryEmit(EditorContract.Effect.ShowMessage("${event.option.name} coming soon."))
+                }
+            }
+
+            EditorContract.Event.ShowAutoCaptionsSheet ->
+                _state.update { it.copy(showAutoCaptionsSheet = true) }
+
+            EditorContract.Event.DismissAutoCaptionsSheet ->
+                _state.update { it.copy(showAutoCaptionsSheet = false) }
+
+            is EditorContract.Event.AutoCaptionsLanguageChanged ->
+                _state.update { it.copy(autoCaptionsConfig = it.autoCaptionsConfig.copy(language = event.language)) }
+
+            is EditorContract.Event.AutoCaptionsFillerWordsToggled ->
+                _state.update { it.copy(autoCaptionsConfig = it.autoCaptionsConfig.copy(identifyFillerWords = event.enabled)) }
+
+            is EditorContract.Event.AutoCaptionsSourceChanged ->
+                _state.update { it.copy(autoCaptionsConfig = it.autoCaptionsConfig.copy(source = event.source)) }
+
+            EditorContract.Event.GenerateAutoCaptions -> generateCaptions()
+
+            is EditorContract.Event.DeleteCaption -> {
+                _state.update { it.copy(captions = it.captions.filter { c -> c.id != event.captionId }) }
+                scheduleAutosave()
+            }
+
+            is EditorContract.Event.EditCaption -> {
+                _state.update {
+                    it.copy(captions = it.captions.map { c ->
+                        if (c.id == event.captionId) c.copy(text = event.newText) else c
+                    })
                 }
                 scheduleAutosave()
             }
 
-            is EditorContract.Event.ReorderMedia -> {
-                reorderMedia(
-                    fromIndex = event.fromIndex,
-                    toIndex = event.toIndex,
-                )
+            is EditorContract.Event.AspectRatioSelected -> {
+                _state.update { it.copy(selectedAspectRatio = event.ratio) }
+                scheduleAutosave()
+            }
+
+            is EditorContract.Event.TextChanged -> {
+                _state.update { current ->
+                    current.copy(textFields = current.textFields.map { item ->
+                        if (item.id == event.fieldId) item.copy(value = event.value.take(item.maxLength)) else item
+                    })
+                }
                 scheduleAutosave()
             }
 
             is EditorContract.Event.TransitionSelected -> {
                 _state.update { current ->
-                    current.copy(
-                        transitions = current.transitions.map { item ->
-                            item.copy(isSelected = item.preset == event.preset)
-                        }
-                    )
+                    current.copy(transitions = current.transitions.map { it.copy(isSelected = it.preset == event.preset) })
                 }
+                scheduleAutosave()
+            }
+
+            is EditorContract.Event.TransitionDurationChanged -> {
+                _state.update { it.copy(transitionDurationMs = event.durationMs.coerceIn(120, 1600)) }
+                scheduleAutosave()
+            }
+
+            is EditorContract.Event.TransitionIntensityChanged -> {
+                _state.update { it.copy(transitionIntensityPercent = event.intensityPercent.coerceIn(0, 100)) }
+                scheduleAutosave()
+            }
+
+            is EditorContract.Event.ReorderMedia -> {
+                reorderMedia(event.fromIndex, event.toIndex)
                 scheduleAutosave()
             }
 
             is EditorContract.Event.TrimChanged -> {
-                updateTrim(
-                    uri = event.uri,
-                    startMs = event.startMs,
-                    endMs = event.endMs,
-                )
+                updateTrim(event.uri, event.startMs, event.endMs)
                 scheduleAutosave()
             }
 
             is EditorContract.Event.MoveMediaUp -> {
-                moveMedia(uri = event.uri, offset = -1)
+                moveMedia(event.uri, -1)
                 scheduleAutosave()
             }
 
             is EditorContract.Event.MoveMediaDown -> {
-                moveMedia(uri = event.uri, offset = 1)
+                moveMedia(event.uri, 1)
                 scheduleAutosave()
             }
 
-            EditorContract.Event.ExportClicked -> {
-                val currentState = _state.value
-                val template = loadedTemplate
+            is EditorContract.Event.ReplaceMedia -> {
+                replaceMedia(event.currentUri, event.newUri)
+            }
 
-                if (template == null) {
-                    _effects.tryEmit(
-                        EditorContract.Effect.ShowMessage("Template could not be loaded.")
-                    )
-                    return
+            is EditorContract.Event.DeleteMedia -> {
+                deleteMedia(event.uri)
+                scheduleAutosave()
+            }
+
+            EditorContract.Event.AddMediaClicked -> {
+                _effects.tryEmit(EditorContract.Effect.RequestMediaPicker)
+            }
+
+            is EditorContract.Event.AdditionalMediaSelected -> {
+                appendMedia(event.uris)
+            }
+
+            EditorContract.Event.AddAudioClicked -> {
+                _effects.tryEmit(EditorContract.Effect.RequestAudioFilePicker)
+            }
+
+            is EditorContract.Event.AudioFileSelected -> {
+                resolveAudioTrack(event.uri)
+            }
+
+            EditorContract.Event.RemoveAudioTrack -> {
+                _state.update { it.copy(audioTrack = null) }
+                scheduleAutosave()
+            }
+
+            is EditorContract.Event.AudioVolumeChanged -> {
+                val track = _state.value.audioTrack ?: return
+                _state.update {
+                    it.copy(audioTrack = track.copy(volume = event.volume.coerceIn(0f, 1f)))
                 }
+                scheduleAutosave()
+            }
 
-                if (currentState.selectedMedia.isEmpty()) {
-                    _effects.tryEmit(
-                        EditorContract.Effect.ShowMessage("No media selected for this project.")
-                    )
-                    return
-                }
+            EditorContract.Event.ExportClicked -> handleExport()
+        }
+    }
 
-                if (currentState.isResolvingMedia) {
-                    _effects.tryEmit(
-                        EditorContract.Effect.ShowMessage("Media is still loading.")
-                    )
-                    return
-                }
+    private fun startPhotoTimer(clipIndex: Int) {
+        photoTimerJob?.cancel()
+        val clips = _state.value.selectedMedia
+        val clip = clips.getOrNull(clipIndex) ?: return
+        if (clip.isVideo) return
 
-                val missingRequired = currentState.textFields
-                    .filter { it.required && it.value.isBlank() }
+        val durationMs = clip.effectiveDurationMs
+        val tickInterval = 32L
 
-                if (missingRequired.isNotEmpty()) {
-                    _effects.tryEmit(
-                        EditorContract.Effect.ShowMessage(
-                            "Please fill all required text fields before export."
-                        )
-                    )
-                    return
-                }
-
-                val selectedTransition = currentState.transitions
-                    .firstOrNull { it.isSelected }
-                    ?.preset
-                    ?: template.defaultTransition
-
-                viewModelScope.launch {
-                    val validationResult = runCatching {
-                        persistCurrentSession(
-                            markSavingState = true,
-                            throwOnFailure = true,
-                        )
-                    }.getOrElse { throwable ->
-                        _effects.tryEmit(
-                            EditorContract.Effect.ShowMessage(
-                                throwable.message ?: "Project could not be saved before export."
-                            )
-                        )
-                        return@launch
-                    }
-
-                    if (validationResult?.hasErrors == true) {
-                        _effects.tryEmit(
-                            EditorContract.Effect.ShowMessage(
-                                validationResult.issues
-                                    .firstOrNull { it.severity == RenderValidationSeverity.ERROR }
-                                    ?.message
-                                    ?: "Project validation failed."
-                            )
-                        )
-                        return@launch
-                    }
-
-                    _effects.tryEmit(
-                        EditorContract.Effect.NavigateExport(
-                            payload = EditorContract.ExportPayload(
-                                projectId = currentProjectId?.value,
-                                templateId = template.id,
-                                mediaClips = currentState.selectedMedia.map { item ->
-                                    EditorContract.EditedMediaClip(
-                                        uri = item.uri,
-                                        trimStartMs = item.trimStartMs,
-                                        trimEndMs = item.trimEndMs,
-                                    )
-                                },
-                                textValues = currentState.textFields.map { item ->
-                                    EditorContract.EditedTextValue(
-                                        fieldId = item.id,
-                                        value = item.value,
-                                    )
-                                },
-                                transition = selectedTransition,
-                                aspectRatioLabel = currentState.template?.aspectRatioLabel.orEmpty(),
-                            )
-                        )
+        photoTimerJob = viewModelScope.launch {
+            var elapsed = 0L
+            while (isActive && elapsed < durationMs && _state.value.isPlaying) {
+                delay(tickInterval)
+                elapsed += tickInterval
+                val globalOffset = clips.take(clipIndex).fold(0L) { acc, c -> acc + c.effectiveDurationMs }
+                _state.update {
+                    it.copy(
+                        playbackPositionMs = (globalOffset + elapsed).coerceAtMost(it.totalDurationMs),
+                        currentClipLocalPositionMs = elapsed.coerceAtMost(durationMs),
                     )
                 }
+            }
+            if (isActive && _state.value.isPlaying) {
+                onEvent(EditorContract.Event.PlayerClipFinished(clipIndex))
             }
         }
     }
 
-    private fun loadTemplate(
-        templateIdArg: String?,
-        mediaUrisArg: List<String>,
-    ) {
-        val normalizedTemplateId = templateIdArg?.trim().orEmpty()
-        val templateId = runCatching { TemplateId(normalizedTemplateId) }.getOrNull()
-        if (templateId == null) {
+    private fun resolveClipForGlobalPosition(globalMs: Long): Pair<Int, Long> {
+        val clips = _state.value.selectedMedia
+        if (clips.isEmpty()) return Pair(0, 0L)
+        var cursor = 0L
+        clips.forEachIndexed { index, clip ->
+            val end = cursor + clip.effectiveDurationMs
+            if (globalMs < end) return Pair(index, globalMs - cursor)
+            cursor = end
+        }
+        return Pair(clips.lastIndex, clips.last().effectiveDurationMs)
+    }
+
+    private fun resolveMediaFromUris(uris: List<String>) {
+        val distinctUris = uris.asSequence()
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+            .take(20)
+            .toList()
+
+        if (distinctUris.isEmpty()) {
             _state.update {
-                it.copy(
-                    isLoading = false,
-                    errorMessage = "Invalid template id.",
-                    validationErrors = emptyList(),
-                    validationWarnings = emptyList(),
-                    autosaveState = EditorContract.AutosaveState(),
-                )
+                it.copy(isLoading = false, isResolvingMedia = false, errorMessage = "No media selected.")
             }
             return
         }
 
-        val template = templateCatalog.getById(templateId)
-        if (template == null) {
-            _state.update {
-                it.copy(
-                    isLoading = false,
-                    errorMessage = "Template not found.",
-                    validationErrors = emptyList(),
-                    validationWarnings = emptyList(),
-                    autosaveState = EditorContract.AutosaveState(),
+        _state.update { it.copy(isLoading = false, isResolvingMedia = true) }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = mediaAssetResolver.resolveAll(distinctUris)
+            val items = result.assets.mapIndexed { index, asset ->
+                asset.toUi(
+                    order = index,
+                    canMoveUp = index > 0,
+                    canMoveDown = index < result.assets.lastIndex,
                 )
             }
-            return
+
+            _state.update {
+                it.copy(
+                    isResolvingMedia = false,
+                    selectedMedia = items,
+                    errorMessage = if (items.isEmpty()) "Selected media could not be read." else null,
+                )
+            }
+
+            if (items.isNotEmpty()) {
+                _effects.tryEmit(EditorContract.Effect.PreparePlayer(0, 0L))
+                scheduleAutosave()
+            }
+
+            if (result.failures.isNotEmpty()) {
+                _effects.tryEmit(EditorContract.Effect.ShowMessage("${result.failures.size} item(s) could not be read."))
+            }
         }
-
-        loadedTemplate = template
-
-        val textFields = template.textFields.map { field ->
-            EditorContract.TextFieldItem(
-                id = field.id,
-                label = field.label,
-                placeholder = field.placeholder,
-                value = field.defaultValue,
-                maxLength = field.maxLength,
-                required = field.required,
-            )
-        }
-
-        val transitions = enumValues<TransitionPreset>().map { preset ->
-            EditorContract.TransitionItem(
-                preset = preset,
-                label = preset.displayLabel(),
-                isSelected = preset == template.defaultTransition,
-            )
-        }
-
-        _state.update {
-            it.copy(
-                isLoading = false,
-                isResolvingMedia = true,
-                template = template.toSummary(),
-                textFields = textFields,
-                transitions = transitions,
-                validationErrors = emptyList(),
-                validationWarnings = emptyList(),
-                autosaveState = EditorContract.AutosaveState(),
-                errorMessage = null,
-            )
-        }
-
-        resolveMedia(mediaUrisArg, template)
     }
 
     private fun loadPersistedProject(projectId: ProjectId) {
@@ -315,35 +441,13 @@ class EditorViewModel(
             val session = projectSessionManager.getSession(projectId)
             if (session == null) {
                 _state.update {
-                    it.copy(
-                        isLoading = false,
-                        errorMessage = "Saved project could not be loaded.",
-                        validationErrors = emptyList(),
-                        validationWarnings = emptyList(),
-                        autosaveState = EditorContract.AutosaveState(),
-                    )
+                    it.copy(isLoading = false, errorMessage = "Saved project could not be loaded.")
                 }
                 return@launch
             }
 
-            val template = templateCatalog.getById(session.draft.templateId)
-            if (template == null) {
-                _state.update {
-                    it.copy(
-                        isLoading = false,
-                        errorMessage = "Template for saved project no longer exists.",
-                        validationErrors = emptyList(),
-                        validationWarnings = emptyList(),
-                        autosaveState = EditorContract.AutosaveState(),
-                    )
-                }
-                return@launch
-            }
-
-            loadedTemplate = template
             currentProjectId = session.draft.id
             createdAtEpochMillis = session.draft.createdAtEpochMillis
-            currentProjectName = session.draft.name
 
             persistedAssetIdsByUri.clear()
             session.mediaAssets.forEach { asset ->
@@ -351,259 +455,347 @@ class EditorViewModel(
             }
 
             val assetById = session.mediaAssets.associateBy { it.id.value }
-
             val selectedMedia = session.draft.slotBindings
                 .sortedBy { it.order }
                 .mapIndexedNotNull { index, binding ->
                     val asset = assetById[binding.mediaAssetId.value] ?: return@mapIndexedNotNull null
-
                     EditorContract.SelectedMediaItem(
                         uri = asset.sourceUri,
                         order = index,
-                        slotLabel = slotLabelFor(template, index),
                         isVideo = (asset.mimeType ?: "").startsWith("video/"),
-                        typeLabel = if ((asset.mimeType ?: "").startsWith("video/")) "Video" else "Photo",
                         fileName = asset.fileName ?: "Unnamed item",
                         durationLabel = asset.durationMs?.let { MediaDurationFormatter.format(it) },
-                        resolutionLabel = if (asset.width != null && asset.height != null) {
-                            "${asset.width}×${asset.height}"
-                        } else {
-                            null
-                        },
+                        resolutionLabel = if (asset.width != null && asset.height != null) "${asset.width}\u00D7${asset.height}" else null,
                         width = asset.width,
                         height = asset.height,
                         mimeType = asset.mimeType,
                         sourceDurationMs = asset.durationMs,
                         trimStartMs = binding.trimStartMs,
                         trimEndMs = binding.trimEndMs ?: asset.durationMs,
-                        canTrim = (asset.mimeType ?: "").startsWith("video/") &&
-                                (asset.durationMs ?: 0L) > 1500L,
+                        canTrim = (asset.mimeType ?: "").startsWith("video/") && (asset.durationMs ?: 0L) > 1500L,
                         canMoveUp = index > 0,
                         canMoveDown = index < session.draft.slotBindings.lastIndex,
                     )
                 }
 
-            val textFields = template.textFields.map { field ->
-                val persisted = session.draft.textValues.firstOrNull { it.fieldId == field.id }
-                EditorContract.TextFieldItem(
-                    id = field.id,
-                    label = field.label,
-                    placeholder = field.placeholder,
-                    value = persisted?.value ?: field.defaultValue,
-                    maxLength = field.maxLength,
-                    required = field.required,
-                )
-            }
-
             val selectedTransition = session.draft.transitionOverrides.firstOrNull()?.transition
-                ?: template.defaultTransition
+                ?: TransitionPreset.CUT
 
-            val transitions = enumValues<TransitionPreset>().map { preset ->
-                EditorContract.TransitionItem(
-                    preset = preset,
-                    label = preset.displayLabel(),
-                    isSelected = preset == selectedTransition,
-                )
+            val restoredAudioTrack = session.draft.audioSelection.let { audio ->
+                val uri = audio.localUri
+                if (audio.sourceKind == AudioSourceKind.LOCAL_URI && !uri.isNullOrBlank()) {
+                    EditorContract.AudioTrackItem(
+                        uri = uri,
+                        fileName = uri.toUri().lastPathSegment ?: "Audio",
+                        durationMs = audio.endMs ?: 0L,
+                        trimStartMs = audio.startMs,
+                        trimEndMs = audio.endMs,
+                        volume = audio.volume,
+                    )
+                } else null
             }
 
             _state.update {
                 it.copy(
                     isLoading = false,
                     isResolvingMedia = false,
-                    template = template.toSummary(),
+                    projectName = session.draft.name,
                     selectedMedia = selectedMedia,
-                    textFields = textFields,
-                    transitions = transitions,
+                    audioTrack = restoredAudioTrack,
+                    transitions = enumValues<TransitionPreset>().map { preset ->
+                        EditorContract.TransitionItem(
+                            preset = preset,
+                            label = preset.displayLabel(),
+                            isSelected = preset == selectedTransition,
+                        )
+                    },
                     autosaveState = EditorContract.AutosaveState(),
                     errorMessage = null,
                 )
             }
 
-            validateCurrentSession(session)
+            if (selectedMedia.isNotEmpty()) {
+                _effects.tryEmit(EditorContract.Effect.PreparePlayer(0, 0L))
+            }
+
             projectSessionManager.setLastActive(projectId)
         }
     }
 
-    private fun resolveMedia(
-        mediaUrisArg: List<String>,
-        template: TemplateSpec,
-    ) {
-        val distinctUris = mediaUrisArg
-            .asSequence()
-            .map(String::trim)
-            .filter(String::isNotBlank)
-            .distinct()
-            .take(template.maxMediaCount)
-            .toList()
+    private fun appendMedia(uris: List<String>) {
+        val existingUris = _state.value.selectedMedia.map { it.uri }.toSet()
+        val newUris = uris.filter { it !in existingUris }.take(20 - _state.value.selectedMedia.size)
+        if (newUris.isEmpty()) return
 
-        if (distinctUris.isEmpty()) {
-            _state.update {
-                it.copy(
-                    isResolvingMedia = false,
-                    selectedMedia = emptyList(),
-                    validationErrors = emptyList(),
-                    validationWarnings = emptyList(),
-                    autosaveState = EditorContract.AutosaveState(),
-                    errorMessage = "No media received from create flow.",
-                )
-            }
-            return
-        }
+        _state.update { it.copy(isResolvingMedia = true) }
 
         viewModelScope.launch(Dispatchers.IO) {
-            val result = mediaAssetResolver.resolveAll(distinctUris)
-
-            val items = result.assets
-                .take(template.maxMediaCount)
-                .mapIndexed { index, asset ->
-                    asset.toUi(
-                        order = index,
-                        slotLabel = slotLabelFor(template, index),
-                        canMoveUp = index > 0,
-                        canMoveDown = index < result.assets.lastIndex &&
-                                index < template.maxMediaCount - 1,
-                    )
-                }
-
-            _state.update {
-                it.copy(
-                    isResolvingMedia = false,
-                    selectedMedia = items,
-                    errorMessage = when {
-                        items.isEmpty() -> "Selected media could not be read."
-                        else -> null
-                    },
+            val result = mediaAssetResolver.resolveAll(newUris)
+            val currentItems = _state.value.selectedMedia
+            val startIndex = currentItems.size
+            val newItems = result.assets.mapIndexed { index, asset ->
+                asset.toUi(
+                    order = startIndex + index,
+                    canMoveUp = true,
+                    canMoveDown = false,
                 )
             }
 
-            if (items.isNotEmpty()) {
+            _state.update { current ->
+                current.copy(
+                    isResolvingMedia = false,
+                    selectedMedia = rebindOrders(current.selectedMedia + newItems),
+                )
+            }
+
+            if (newItems.isNotEmpty()) {
                 scheduleAutosave()
             }
 
             if (result.failures.isNotEmpty()) {
-                _effects.tryEmit(
-                    EditorContract.Effect.ShowMessage(
-                        "${result.failures.size} item(s) could not be read."
-                    )
-                )
+                _effects.tryEmit(EditorContract.Effect.ShowMessage("${result.failures.size} item(s) could not be read."))
             }
         }
     }
 
-    private fun reorderMedia(
-        fromIndex: Int,
-        toIndex: Int,
-    ) {
-        val template = loadedTemplate ?: return
+    private fun resolveAudioTrack(uri: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val retriever = android.media.MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(applicationContext, uri.toUri())
+                val durationStr = retriever.extractMetadata(
+                    android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
+                )
+                val durationMs = durationStr?.toLongOrNull() ?: 0L
+                val title = retriever.extractMetadata(
+                    android.media.MediaMetadataRetriever.METADATA_KEY_TITLE
+                )
+                val displayName = title?.takeIf { it.isNotBlank() }
+                    ?: uri.toUri().lastPathSegment
+                    ?: "Audio"
 
+                val audioTrack = EditorContract.AudioTrackItem(
+                    uri = uri,
+                    fileName = displayName,
+                    durationMs = durationMs,
+                )
+
+                _state.update { it.copy(audioTrack = audioTrack) }
+                scheduleAutosave()
+            } catch (_: Throwable) {
+                _effects.tryEmit(
+                    EditorContract.Effect.ShowMessage("Audio could not be read.")
+                )
+            } finally {
+                runCatching { retriever.release() }
+            }
+        }
+    }
+
+    private fun replaceMedia(currentUri: String, newUri: String) {
+        val currentItems = _state.value.selectedMedia
+        val targetIndex = currentItems.indexOfFirst { it.uri == currentUri }
+        if (targetIndex == -1) return
+
+        _state.update { it.copy(isResolvingMedia = true) }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = mediaAssetResolver.resolveAll(listOf(newUri))
+            val asset = result.assets.firstOrNull()
+
+            if (asset == null) {
+                _state.update { it.copy(isResolvingMedia = false) }
+                _effects.tryEmit(EditorContract.Effect.ShowMessage("Replacement media could not be read."))
+                return@launch
+            }
+
+            persistedAssetIdsByUri.remove(currentUri)
+            val replacement = asset.toUi(
+                order = targetIndex,
+                canMoveUp = targetIndex > 0,
+                canMoveDown = targetIndex < currentItems.lastIndex,
+            )
+
+            _state.update { current ->
+                val updated = current.selectedMedia.toMutableList()
+                if (targetIndex !in updated.indices) {
+                    current.copy(isResolvingMedia = false)
+                } else {
+                    updated[targetIndex] = replacement
+                    current.copy(
+                        isResolvingMedia = false,
+                        selectedMedia = rebindOrders(updated),
+                        errorMessage = null,
+                    )
+                }
+            }
+            scheduleAutosave()
+        }
+    }
+
+    private fun deleteMedia(uri: String) {
+        persistedAssetIdsByUri.remove(uri)
+        _state.update { current ->
+            current.copy(selectedMedia = rebindOrders(current.selectedMedia.filterNot { it.uri == uri }))
+        }
+    }
+
+    private fun reorderMedia(fromIndex: Int, toIndex: Int) {
         _state.update { current ->
             if (fromIndex !in current.selectedMedia.indices) return@update current
             if (toIndex !in current.selectedMedia.indices) return@update current
             if (fromIndex == toIndex) return@update current
-
             val mutable = current.selectedMedia.toMutableList()
-            val moved = mutable.removeAt(fromIndex)
-            mutable.add(toIndex, moved)
-
-            current.copy(
-                selectedMedia = rebindSlotAssignments(
-                    template = template,
-                    items = mutable,
-                )
-            )
+            mutable.add(toIndex, mutable.removeAt(fromIndex))
+            current.copy(selectedMedia = rebindOrders(mutable))
         }
     }
 
-    private fun updateTrim(
-        uri: String,
-        startMs: Long,
-        endMs: Long,
-    ) {
+    private fun updateTrim(uri: String, startMs: Long, endMs: Long) {
         _state.update { current ->
-            current.copy(
-                selectedMedia = current.selectedMedia.map { item ->
-                    if (item.uri != uri || !item.canTrim) {
-                        item
-                    } else {
-                        val sourceDuration = item.sourceDurationMs ?: 0L
-                        val safeStart = startMs.coerceIn(0L, sourceDuration)
-                        val safeEnd = endMs.coerceIn(safeStart + 300L, sourceDuration)
-
-                        item.copy(
-                            trimStartMs = safeStart,
-                            trimEndMs = safeEnd,
-                            durationLabel = MediaDurationFormatter.format(safeEnd - safeStart),
-                        )
-                    }
+            current.copy(selectedMedia = current.selectedMedia.map { item ->
+                if (item.uri != uri || !item.canTrim) item
+                else {
+                    val sourceDuration = item.sourceDurationMs ?: 0L
+                    val safeStart = startMs.coerceIn(0L, sourceDuration)
+                    val safeEnd = endMs.coerceIn(safeStart + 300L, sourceDuration)
+                    item.copy(
+                        trimStartMs = safeStart,
+                        trimEndMs = safeEnd,
+                        durationLabel = MediaDurationFormatter.format(safeEnd - safeStart),
+                    )
                 }
-            )
+            })
         }
     }
 
-    private fun moveMedia(
-        uri: String,
-        offset: Int,
-    ) {
-        val template = loadedTemplate ?: return
-
+    private fun moveMedia(uri: String, offset: Int) {
         _state.update { current ->
-            val currentIndex = current.selectedMedia.indexOfFirst { it.uri == uri }
-            if (currentIndex == -1) return@update current
-
-            val targetIndex = currentIndex + offset
-            if (targetIndex !in current.selectedMedia.indices) return@update current
-
+            val idx = current.selectedMedia.indexOfFirst { it.uri == uri }
+            if (idx == -1) return@update current
+            val target = idx + offset
+            if (target !in current.selectedMedia.indices) return@update current
             val mutable = current.selectedMedia.toMutableList()
-            val moved = mutable.removeAt(currentIndex)
-            mutable.add(targetIndex, moved)
+            mutable.add(target, mutable.removeAt(idx))
+            current.copy(selectedMedia = rebindOrders(mutable))
+        }
+    }
 
-            current.copy(
-                selectedMedia = rebindSlotAssignments(
-                    template = template,
-                    items = mutable,
+    private fun rebindOrders(items: List<EditorContract.SelectedMediaItem>): List<EditorContract.SelectedMediaItem> {
+        return items.mapIndexed { index, item ->
+            item.copy(order = index, canMoveUp = index > 0, canMoveDown = index < items.lastIndex)
+        }
+    }
+
+    private fun addEmptyCaption() {
+        val positionMs = _state.value.playbackPositionMs
+        val newCaption = EditorContract.CaptionItem(
+            id = UUID.randomUUID().toString(),
+            text = "",
+            startMs = positionMs,
+            endMs = (positionMs + 2_000L).coerceAtMost(_state.value.totalDurationMs),
+        )
+        _state.update { it.copy(captions = it.captions + newCaption) }
+        scheduleAutosave()
+    }
+
+    private fun generateCaptions() {
+        if (_state.value.autoCaptionsConfig.isGenerating) return
+
+        _state.update { it.copy(autoCaptionsConfig = it.autoCaptionsConfig.copy(isGenerating = true, generationProgress = 0f)) }
+
+        viewModelScope.launch {
+            val totalDuration = _state.value.totalDurationMs
+            if (totalDuration <= 0L) {
+                _state.update { it.copy(autoCaptionsConfig = it.autoCaptionsConfig.copy(isGenerating = false)) }
+                _effects.tryEmit(EditorContract.Effect.ShowMessage("No media to generate captions from."))
+                return@launch
+            }
+
+            for (step in 1..10) {
+                delay(300L)
+                _state.update { it.copy(autoCaptionsConfig = it.autoCaptionsConfig.copy(generationProgress = step / 10f)) }
+            }
+
+            val segmentDuration = 3_000L
+            val generatedCaptions = buildList {
+                var cursor = 0L
+                var index = 1
+                while (cursor < totalDuration) {
+                    val end = (cursor + segmentDuration).coerceAtMost(totalDuration)
+                    add(EditorContract.CaptionItem(
+                        id = UUID.randomUUID().toString(),
+                        text = "Caption segment $index",
+                        startMs = cursor,
+                        endMs = end,
+                    ))
+                    cursor = end
+                    index++
+                }
+            }
+
+            _state.update {
+                it.copy(
+                    captions = generatedCaptions,
+                    autoCaptionsConfig = it.autoCaptionsConfig.copy(isGenerating = false, generationProgress = 1f),
+                    showAutoCaptionsSheet = false,
+                    showCaptionsPanel = false,
+                    activeToolbarTab = null,
+                )
+            }
+            _effects.tryEmit(EditorContract.Effect.ShowMessage("${generatedCaptions.size} captions generated."))
+            scheduleAutosave()
+        }
+    }
+
+    private fun handleExport() {
+        val currentState = _state.value
+        if (currentState.selectedMedia.isEmpty()) {
+            _effects.tryEmit(EditorContract.Effect.ShowMessage("No media selected for this project."))
+            return
+        }
+        if (currentState.isResolvingMedia) {
+            _effects.tryEmit(EditorContract.Effect.ShowMessage("Media is still loading."))
+            return
+        }
+
+        val selectedTransition = currentState.transitions.firstOrNull { it.isSelected }?.preset ?: TransitionPreset.CUT
+
+        viewModelScope.launch {
+            runCatching { persistCurrentSession(markSavingState = true, throwOnFailure = true) }
+                .onFailure { throwable ->
+                    _effects.tryEmit(EditorContract.Effect.ShowMessage(throwable.message ?: "Save failed."))
+                    return@launch
+                }
+
+            _effects.tryEmit(
+                EditorContract.Effect.NavigateExport(
+                    payload = EditorContract.ExportPayload(
+                        projectId = currentProjectId?.value,
+                        templateId = TemplateId("direct-media"),
+                        mediaClips = currentState.selectedMedia.map { item ->
+                            EditorContract.EditedMediaClip(uri = item.uri, trimStartMs = item.trimStartMs, trimEndMs = item.trimEndMs)
+                        },
+                        textValues = currentState.textFields.map { item ->
+                            EditorContract.EditedTextValue(fieldId = item.id, value = item.value)
+                        },
+                        transition = selectedTransition,
+                        transitionDurationMs = currentState.transitionDurationMs,
+                        transitionIntensityPercent = currentState.transitionIntensityPercent,
+                        aspectRatioLabel = currentState.selectedAspectRatio,
+                        backgroundMusicUri = currentState.audioTrack?.uri,
+                    )
                 )
             )
-        }
-    }
-
-    private fun rebindSlotAssignments(
-        template: TemplateSpec,
-        items: List<EditorContract.SelectedMediaItem>,
-    ): List<EditorContract.SelectedMediaItem> {
-        return items.mapIndexed { index, item ->
-            item.copy(
-                order = index,
-                slotLabel = slotLabelFor(template, index),
-                canMoveUp = index > 0,
-                canMoveDown = index < items.lastIndex,
-            )
-        }
-    }
-
-    private fun slotLabelFor(
-        template: TemplateSpec,
-        index: Int,
-    ): String {
-        val slot = template.slots
-            .sortedBy { it.index }
-            .getOrNull(index)
-
-        return if (slot != null) {
-            "Slot ${slot.index + 1}"
-        } else {
-            "Slot ${index + 1}"
         }
     }
 
     private fun scheduleAutosave() {
         autosaveJob?.cancel()
         autosaveStatusResetJob?.cancel()
-
         val current = _state.value
         if (current.isLoading || current.isResolvingMedia) return
-
         markAutosaveSaving()
-
         autosaveJob = viewModelScope.launch {
             delay(500L)
             persistCurrentSession(markSavingState = false)
@@ -613,31 +805,20 @@ class EditorViewModel(
     private suspend fun persistCurrentSession(
         markSavingState: Boolean = true,
         throwOnFailure: Boolean = false,
-    ): RenderValidationResult? {
-        val template = loadedTemplate ?: return null
+    ) {
         val current = _state.value
-        if (current.isLoading || current.isResolvingMedia) return null
+        if (current.isLoading || current.isResolvingMedia) return
+        if (markSavingState) markAutosaveSaving()
 
-        if (markSavingState) {
-            markAutosaveSaving()
-        }
-
-        return try {
+        try {
             val now = System.currentTimeMillis()
-            val projectId = currentProjectId ?: ProjectId(UUID.randomUUID().toString()).also {
-                currentProjectId = it
-            }
+            val projectId = currentProjectId ?: ProjectId(UUID.randomUUID().toString()).also { currentProjectId = it }
             val createdAt = createdAtEpochMillis ?: now
             createdAtEpochMillis = createdAt
 
-            val orderedSlots = template.slots.sortedBy { it.index }
-
             val mediaAssets = current.selectedMedia.map { item ->
-                val existingId = persistedAssetIdsByUri[item.uri]
-                val resolvedId = existingId ?: MediaAssetId(UUID.randomUUID().toString()).also {
-                    persistedAssetIdsByUri[item.uri] = it
-                }
-
+                val resolvedId = persistedAssetIdsByUri[item.uri]
+                    ?: MediaAssetId(UUID.randomUUID().toString()).also { persistedAssetIdsByUri[item.uri] = it }
                 ProjectMediaAssetRef(
                     id = resolvedId,
                     sourceUri = item.uri,
@@ -649,202 +830,99 @@ class EditorViewModel(
                 )
             }
 
-            val slotBindings = current.selectedMedia.mapIndexedNotNull { index, item ->
-                val slot = orderedSlots.getOrNull(index) ?: return@mapIndexedNotNull null
-                val assetId = persistedAssetIdsByUri[item.uri] ?: return@mapIndexedNotNull null
-
+            val slotBindings = current.selectedMedia.mapIndexed { index, item ->
+                val assetId = persistedAssetIdsByUri[item.uri] ?: return@mapIndexed null
                 ProjectSlotBinding(
-                    slotId = slot.id,
+                    slotId = com.muratcangzm.model.id.SlotId("slot-$index"),
                     mediaAssetId = assetId,
                     order = index,
                     trimStartMs = item.trimStartMs,
                     trimEndMs = item.trimEndMs,
                 )
-            }
+            }.filterNotNull()
 
             val selectedTransition = current.transitions.firstOrNull { it.isSelected }?.preset
-            val firstSlot = orderedSlots.firstOrNull()
+            val transitionOverrides = if (selectedTransition != null && slotBindings.isNotEmpty()) {
+                listOf(ProjectTransitionOverride(slotId = slotBindings.first().slotId, transition = selectedTransition))
+            } else emptyList()
 
-            val transitionOverrides = if (selectedTransition != null && firstSlot != null) {
-                listOf(
-                    ProjectTransitionOverride(
-                        slotId = firstSlot.id,
-                        transition = selectedTransition,
-                    )
-                )
-            } else {
-                emptyList()
-            }
-
-            val hasMissingRequired = current.textFields.any { it.required && it.value.isBlank() }
-            val status = when {
-                slotBindings.isEmpty() -> ProjectStatus.DRAFT
-                hasMissingRequired -> ProjectStatus.DRAFT
-                else -> ProjectStatus.READY
-            }
+            val status = if (slotBindings.isEmpty()) ProjectStatus.DRAFT else ProjectStatus.READY
 
             val draft = ProjectDraft(
                 id = projectId,
-                name = currentProjectName ?: template.name,
-                templateId = template.id,
-                aspectRatio = template.aspectRatio,
+                name = current.projectName,
+                templateId = TemplateId("direct-media"),
+                aspectRatio = AspectRatio.VERTICAL_9_16,
                 slotBindings = slotBindings,
-                textValues = current.textFields.map {
-                    ProjectTextValue(
-                        fieldId = it.id,
-                        value = it.value,
-                    )
-                },
+                textValues = current.textFields.map { ProjectTextValue(fieldId = it.id, value = it.value) },
                 transitionOverrides = transitionOverrides,
-                audioSelection = ProjectAudioSelection(),
+                audioSelection = current.audioTrack?.let { track ->
+                    ProjectAudioSelection(
+                        sourceKind = AudioSourceKind.LOCAL_URI,
+                        localUri = track.uri,
+                        startMs = track.trimStartMs,
+                        endMs = track.trimEndMs ?: track.durationMs,
+                        volume = track.volume,
+                    )
+                } ?: ProjectAudioSelection(),
                 coverMediaAssetId = mediaAssets.firstOrNull()?.id,
                 status = status,
                 createdAtEpochMillis = createdAt,
                 updatedAtEpochMillis = now,
             )
 
-            val session = ProjectEditorSession(
-                draft = draft,
-                mediaAssets = mediaAssets,
-            )
-
             projectSessionManager.saveSession(
-                session = session,
+                session = ProjectEditorSession(draft = draft, mediaAssets = mediaAssets),
                 setActive = true,
             )
-
-            val validationResult = validateCurrentSession(session)
             markAutosaveSaved()
-            validationResult
         } catch (throwable: Throwable) {
-            val message = throwable.message ?: "Project changes could not be saved."
-            markAutosaveError(message)
+            markAutosaveError(throwable.message ?: "Save failed.")
             if (throwOnFailure) throw throwable
-            null
         }
-    }
-
-    private fun validateCurrentSession(
-        session: ProjectEditorSession,
-    ): RenderValidationResult {
-        val template = loadedTemplate ?: return RenderValidationResult(emptyList())
-
-        val result = renderValidationEngine.validate(
-            template = template,
-            session = session,
-        )
-
-        _state.update {
-            it.copy(
-                validationErrors = result.issues
-                    .filter { issue -> issue.severity == RenderValidationSeverity.ERROR }
-                    .map { issue -> issue.message },
-                validationWarnings = result.issues
-                    .filter { issue -> issue.severity == RenderValidationSeverity.WARNING }
-                    .map { issue -> issue.message },
-            )
-        }
-
-        return result
     }
 
     private fun markAutosaveSaving() {
         autosaveStatusResetJob?.cancel()
-
-        _state.update {
-            it.copy(
-                autosaveState = EditorContract.AutosaveState(
-                    status = EditorContract.AutosaveState.Status.Saving,
-                    message = "Saving changes..."
-                )
-            )
-        }
+        _state.update { it.copy(autosaveState = EditorContract.AutosaveState(EditorContract.AutosaveState.Status.Saving, "Saving changes.")) }
     }
 
     private fun markAutosaveSaved() {
         autosaveStatusResetJob?.cancel()
-
-        _state.update {
-            it.copy(
-                autosaveState = EditorContract.AutosaveState(
-                    status = EditorContract.AutosaveState.Status.Saved,
-                    message = "All changes saved"
-                )
-            )
-        }
-
+        _state.update { it.copy(autosaveState = EditorContract.AutosaveState(EditorContract.AutosaveState.Status.Saved, "All changes saved")) }
         autosaveStatusResetJob = viewModelScope.launch {
             delay(1800L)
-
-            val currentStatus = _state.value.autosaveState.status
-            if (currentStatus == EditorContract.AutosaveState.Status.Saved) {
-                _state.update {
-                    it.copy(
-                        autosaveState = EditorContract.AutosaveState(
-                            status = EditorContract.AutosaveState.Status.Idle,
-                            message = "Auto-save is enabled"
-                        )
-                    )
-                }
+            if (_state.value.autosaveState.status == EditorContract.AutosaveState.Status.Saved) {
+                _state.update { it.copy(autosaveState = EditorContract.AutosaveState(EditorContract.AutosaveState.Status.Idle, "Auto-save enabled")) }
             }
         }
     }
 
     private fun markAutosaveError(message: String) {
         autosaveStatusResetJob?.cancel()
-
-        _state.update {
-            it.copy(
-                autosaveState = EditorContract.AutosaveState(
-                    status = EditorContract.AutosaveState.Status.Error,
-                    message = message
-                )
-            )
-        }
+        _state.update { it.copy(autosaveState = EditorContract.AutosaveState(EditorContract.AutosaveState.Status.Error, message)) }
     }
 
     override fun onCleared() {
         autosaveJob?.cancel()
         autosaveStatusResetJob?.cancel()
+        photoTimerJob?.cancel()
         super.onCleared()
     }
 }
 
-private fun TemplateSpec.toSummary(): EditorContract.TemplateSummary =
-    EditorContract.TemplateSummary(
-        id = id,
-        name = name,
-        description = description,
-        categoryLabel = category.displayLabel(),
-        aspectRatioLabel = aspectRatio.displayLabel(),
-    )
-
 private fun MediaAsset.toUi(
     order: Int,
-    slotLabel: String,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
 ): EditorContract.SelectedMediaItem =
     EditorContract.SelectedMediaItem(
         uri = uri,
         order = order,
-        slotLabel = slotLabel,
         isVideo = type == MediaType.VIDEO,
-        typeLabel = when (type) {
-            MediaType.IMAGE -> "Photo"
-            MediaType.VIDEO -> "Video"
-        },
         fileName = fileName ?: "Unnamed item",
-        durationLabel = if (type == MediaType.VIDEO) {
-            MediaDurationFormatter.format(durationMs)
-        } else {
-            null
-        },
-        resolutionLabel = if (width != null && height != null) {
-            "${width}×${height}"
-        } else {
-            null
-        },
+        durationLabel = if (type == MediaType.VIDEO) MediaDurationFormatter.format(durationMs) else null,
+        resolutionLabel = if (width != null && height != null) "${width}\u00D7${height}" else null,
         width = width,
         height = height,
         mimeType = mimeType,
@@ -867,26 +945,4 @@ private fun TransitionPreset.displayLabel(): String = when (this) {
     TransitionPreset.SHAKE -> "Shake"
     TransitionPreset.FLASH -> "Flash"
     TransitionPreset.BLUR -> "Blur"
-}
-
-private fun TemplateCategory.displayLabel(): String = when (this) {
-    TemplateCategory.TRENDING -> "Trending"
-    TemplateCategory.PARTY -> "Party"
-    TemplateCategory.LOVE -> "Love"
-    TemplateCategory.TRAVEL -> "Travel"
-    TemplateCategory.FITNESS -> "Fitness"
-    TemplateCategory.PROMO -> "Promo"
-    TemplateCategory.GLITCH -> "Glitch"
-    TemplateCategory.BIRTHDAY -> "Birthday"
-    TemplateCategory.MEMORIES -> "Memories"
-    TemplateCategory.BUSINESS -> "Business"
-    TemplateCategory.MINIMAL -> "Minimal"
-    TemplateCategory.CINEMATIC -> "Cinematic"
-}
-
-private fun AspectRatio.displayLabel(): String = when (this) {
-    AspectRatio.VERTICAL_9_16 -> "9:16"
-    AspectRatio.PORTRAIT_4_5 -> "4:5"
-    AspectRatio.SQUARE_1_1 -> "1:1"
-    AspectRatio.LANDSCAPE_16_9 -> "16:9"
 }

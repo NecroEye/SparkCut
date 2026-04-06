@@ -1,53 +1,76 @@
 package com.muratcangzm.editor.ui
 
+import android.content.Context
 import android.graphics.Bitmap
-import androidx.compose.foundation.BorderStroke
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.ArrowDownward
-import androidx.compose.material.icons.outlined.ArrowUpward
-import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material.icons.automirrored.outlined.VolumeOff
+import androidx.compose.material.icons.automirrored.outlined.VolumeUp
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.FastForward
+import androidx.compose.material.icons.outlined.FastRewind
+import androidx.compose.material.icons.outlined.LocalFireDepartment
+import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.MovieCreation
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Upload
+import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.RangeSlider
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,47 +79,164 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.muratcangzm.designsystem.button.SparkCutButtonSize
-import com.muratcangzm.designsystem.button.SparkCutPrimaryButton
-import com.muratcangzm.designsystem.button.SparkCutSecondaryButton
-import com.muratcangzm.designsystem.component.SparkCutScaffold
-import com.muratcangzm.designsystem.field.SparkCutTextField
-import com.muratcangzm.designsystem.theme.SparkCutTheme
-import com.muratcangzm.editor.ui.reorder.EditorReorderState
-import com.muratcangzm.editor.ui.reorder.reorderDragHandle
-import com.muratcangzm.media.domain.MediaDurationFormatter
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import com.muratcangzm.editor.ui.composable.AutoCaptionsSheet
+import com.muratcangzm.editor.ui.composable.CaptionsPanel
+import com.muratcangzm.editor.ui.composable.EditorBottomToolbar
 import com.muratcangzm.media.domain.MediaThumbnailProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.roundToInt
 
 @Composable
 fun EditorScreen(
-    templateId: String,
     mediaUris: List<String>,
     onBack: () -> Unit,
     onOpenExport: (EditorContract.ExportPayload) -> Unit,
+    projectId: String? = null,
     viewModel: EditorViewModel = koinViewModel(
-        parameters = { parametersOf(templateId, mediaUris, null) }
+        parameters = { parametersOf(mediaUris, projectId) }
     ),
     thumbnailProvider: MediaThumbnailProvider = koinInject(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+
+    val exoPlayer = remember {
+        ExoPlayer.Builder(context).build().apply {
+            playWhenReady = false
+            repeatMode = Player.REPEAT_MODE_OFF
+        }
+    }
+
+    val currentClipIndexRef = remember { mutableIntStateOf(0) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            exoPlayer.release()
+        }
+    }
+
+    LaunchedEffect(state.isMuted) {
+        exoPlayer.volume = if (state.isMuted) 0f else 1f
+    }
+
+    val currentOnEvent = rememberUpdatedState(viewModel::onEvent)
+
+    LaunchedEffect(exoPlayer) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) {
+                    currentOnEvent.value(
+                        EditorContract.Event.PlayerClipFinished(
+                            clipIndex = currentClipIndexRef.intValue
+                        )
+                    )
+                }
+            }
+        }
+        exoPlayer.addListener(listener)
+    }
+
+    LaunchedEffect(state.isPlaying, exoPlayer) {
+        while (isActive && state.isPlaying) {
+            if (exoPlayer.playbackState == Player.STATE_READY && exoPlayer.isPlaying) {
+                val rawPosition = exoPlayer.currentPosition.coerceAtLeast(0L)
+                val clips = viewModel.state.value.selectedMedia
+                val clipIndex = currentClipIndexRef.intValue
+                val trimStart = clips.getOrNull(clipIndex)?.trimStartMs ?: 0L
+                val localPosition = (rawPosition - trimStart).coerceAtLeast(0L)
+                currentOnEvent.value(EditorContract.Event.PlaybackPositionUpdate(localPosition))
+            }
+            delay(32L)
+        }
+    }
+
+    val addMediaPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 20),
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            viewModel.onEvent(
+                EditorContract.Event.AdditionalMediaSelected(uris.map { it.toString() })
+            )
+        }
+    }
+
+    val audioPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.onEvent(EditorContract.Event.AudioFileSelected(uri.toString()))
+        }
+    }
 
     LaunchedEffect(viewModel.effects) {
         viewModel.effects.collect { effect ->
             when (effect) {
                 EditorContract.Effect.NavigateBack -> onBack()
                 is EditorContract.Effect.NavigateExport -> onOpenExport(effect.payload)
-                is EditorContract.Effect.ShowMessage -> {
-                    snackbarHostState.showSnackbar(effect.message)
+                is EditorContract.Effect.ShowMessage -> snackbarHostState.showSnackbar(effect.message)
+                is EditorContract.Effect.PreparePlayer -> {
+                    val clips = viewModel.state.value.selectedMedia
+                    if (effect.clipIndex in clips.indices) {
+                        val clip = clips[effect.clipIndex]
+                        currentClipIndexRef.intValue = effect.clipIndex
+                        if (clip.isVideo) {
+                            val mediaItem = MediaItem.fromUri(Uri.parse(clip.uri))
+                            exoPlayer.stop()
+                            exoPlayer.setMediaItem(mediaItem)
+                            exoPlayer.playWhenReady = false
+                            exoPlayer.prepare()
+                            val seekTarget = (clip.trimStartMs ?: 0L) + effect.seekToMs
+                            exoPlayer.seekTo(seekTarget.coerceAtLeast(0L))
+                        } else {
+                            exoPlayer.stop()
+                            exoPlayer.clearMediaItems()
+                        }
+                    }
+                }
+                EditorContract.Effect.StartPlayer -> {
+                    exoPlayer.playWhenReady = true
+                    if (exoPlayer.playbackState == Player.STATE_IDLE) {
+                        exoPlayer.prepare()
+                    }
+                }
+                EditorContract.Effect.PausePlayer -> {
+                    exoPlayer.playWhenReady = false
+                }
+                EditorContract.Effect.RequestMediaPicker -> {
+                    addMediaPickerLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                    )
+                }
+                EditorContract.Effect.RequestAudioFilePicker -> {
+                    audioPickerLauncher.launch(arrayOf("audio/*"))
                 }
             }
         }
@@ -105,6 +245,7 @@ fun EditorScreen(
     EditorScreenContent(
         state = state,
         snackbarHostState = snackbarHostState,
+        exoPlayer = exoPlayer,
         onEvent = viewModel::onEvent,
         thumbnailProvider = thumbnailProvider,
     )
@@ -114,231 +255,137 @@ fun EditorScreen(
 private fun EditorScreenContent(
     state: EditorContract.State,
     snackbarHostState: SnackbarHostState,
+    exoPlayer: ExoPlayer,
     onEvent: (EditorContract.Event) -> Unit,
     thumbnailProvider: MediaThumbnailProvider,
 ) {
-    val spacing = SparkCutTheme.spacing
-
-    val listState = rememberLazyListState()
-    val reorderState = remember {
-        EditorReorderState(
-            listState = listState,
-            onMove = { from, to ->
-                onEvent(EditorContract.Event.ReorderMedia(from, to))
-            }
-        )
+    val selectedMediaIndex = remember(state.selectedMedia, state.playbackPositionMs) {
+        selectedMediaIndexForPosition(state.selectedMedia, state.playbackPositionMs)
     }
+    val selectedMedia = state.selectedMedia.getOrNull(selectedMediaIndex)
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(SparkCutTheme.colors.background)
-    ) {
-        EditorBackgroundGlow()
-
-        SparkCutScaffold(
-            snackbarHostState = snackbarHostState,
-            bottomBar = {
-                if (!state.isLoading && state.template != null) {
-                    EditorBottomBar(
-                        state = state,
-                        onExportClick = {
-                            onEvent(EditorContract.Event.ExportClicked)
-                        }
-                    )
-                }
-            }
-        ) { innerPadding ->
+    Scaffold(
+        containerColor = EditorColors.ScreenBackground,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(EditorColors.ScreenBackground)
+                .padding(innerPadding),
+        ) {
             when {
                 state.isLoading -> {
                     Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(innerPadding),
-                        contentAlignment = Alignment.Center
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        CircularProgressIndicator(
-                            color = SparkCutTheme.colors.primary
-                        )
+                        CircularProgressIndicator(color = EditorColors.Accent)
                     }
                 }
 
-                state.template == null -> {
-                    LazyColumn(
+                state.selectedMedia.isEmpty() && state.errorMessage != null -> {
+                    Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(innerPadding),
-                        contentPadding = PaddingValues(spacing.md),
-                        verticalArrangement = Arrangement.spacedBy(18.dp)
+                            .padding(20.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        item {
-                            EditorTopHeader(
-                                autosaveState = state.autosaveState,
-                                onBack = {
-                                    onEvent(EditorContract.Event.BackClicked)
-                                }
-                            )
-                        }
-
-                        item {
-                            SparkCutSecondaryButton(
-                                text = "Go back",
-                                onClick = {
-                                    onEvent(EditorContract.Event.BackClicked)
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
+                        EmptyEditorState(
+                            title = "Editor unavailable",
+                            body = state.errorMessage,
+                        )
                     }
                 }
 
                 else -> {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(innerPadding),
-                        contentPadding = PaddingValues(
-                            start = spacing.md,
-                            top = spacing.sm,
-                            end = spacing.md,
-                            bottom = spacing.xxl
-                        ),
-                        verticalArrangement = Arrangement.spacedBy(24.dp)
-                    ) {
-                        item {
-                            EditorTopHeader(
-                                autosaveState = state.autosaveState,
-                                onBack = {
-                                    onEvent(EditorContract.Event.BackClicked)
-                                }
-                            )
-                        }
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        EditorTopBar(
+                            state = state,
+                            onClose = { onEvent(EditorContract.Event.BackClicked) },
+                            onExport = { onEvent(EditorContract.Event.ExportClicked) },
+                            onAspectRatioSelected = { ratio ->
+                                onEvent(EditorContract.Event.AspectRatioSelected(ratio))
+                            },
+                        )
 
-                        item {
-                            EditorHeroSection(state = state)
-                        }
-
-                        if (state.validationErrors.isNotEmpty() || state.validationWarnings.isNotEmpty()) {
-                            item {
-                                ValidationSpotlightCard(
-                                    errors = state.validationErrors,
-                                    warnings = state.validationWarnings
-                                )
-                            }
-                        }
-
-                        item {
-                            EditorSectionHeader(
-                                eyebrow = "SEQUENCE",
-                                title = "Arrange your story",
-                                subtitle = if (state.isResolvingMedia) {
-                                    "Preparing media and metadata."
-                                } else {
-                                    "Drag, reorder and trim clips to shape the flow."
-                                }
-                            )
-                        }
-
-                        if (state.selectedMedia.isEmpty()) {
-                            item {
-                                EmptyEditorCard(
-                                    title = "No media available",
-                                    message = "There are no clips or photos connected to this project yet."
-                                )
-                            }
-                        } else {
-                            items(
-                                count = state.selectedMedia.size,
-                                key = { index -> state.selectedMedia[index].uri }
-                            ) { index ->
-                                val item = state.selectedMedia[index]
-                                EditorMediaCard(
-                                    item = item,
-                                    thumbnailProvider = thumbnailProvider,
-                                    onMoveUp = {
-                                        onEvent(EditorContract.Event.MoveMediaUp(item.uri))
-                                    },
-                                    onMoveDown = {
-                                        onEvent(EditorContract.Event.MoveMediaDown(item.uri))
-                                    },
-                                    onTrimChanged = { startMs, endMs ->
-                                        onEvent(
-                                            EditorContract.Event.TrimChanged(
-                                                uri = item.uri,
-                                                startMs = startMs,
-                                                endMs = endMs,
-                                            )
-                                        )
-                                    },
-                                    modifier = Modifier
-                                        .graphicsLayer {
-                                            translationY = reorderState.offsetFor(index)
-                                        }
-                                        .reorderDragHandle(
-                                            index = index,
-                                            state = reorderState,
-                                        ),
-                                )
-                            }
-                        }
-
-                        item {
-                            EditorSectionHeader(
-                                eyebrow = "TEXT",
-                                title = "Overlay copy",
-                                subtitle = if (state.textFields.isEmpty()) {
-                                    "This template does not expose editable text."
-                                } else {
-                                    "Tune titles, captions and CTA copy before export."
-                                }
-                            )
-                        }
-
-                        item {
-                            TextFieldsPanel(
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                        ) {
+                            VideoPreviewArea(
                                 state = state,
-                                onEvent = onEvent
+                                selectedMedia = selectedMedia,
+                                exoPlayer = exoPlayer,
+                                thumbnailProvider = thumbnailProvider,
+                                onTogglePlay = { onEvent(EditorContract.Event.TogglePlayPause) },
                             )
                         }
 
-                        item {
-                            EditorSectionHeader(
-                                eyebrow = "TRANSITIONS",
-                                title = "Motion language",
-                                subtitle = "Pick how SparkCut moves from one clip to the next."
-                            )
-                        }
+                        PlaybackControlStrip(
+                            state = state,
+                            onTogglePlay = { onEvent(EditorContract.Event.TogglePlayPause) },
+                            onSeekBack = { onEvent(EditorContract.Event.SeekBack) },
+                            onSeekForward = { onEvent(EditorContract.Event.SeekForward) },
+                        )
 
-                        item {
-                            TransitionPanel(
-                                transitions = state.transitions,
-                                onSelect = { preset ->
-                                    onEvent(EditorContract.Event.TransitionSelected(preset))
-                                }
-                            )
-                        }
+                        TimelineSection(
+                            state = state,
+                            selectedMediaIndex = selectedMediaIndex,
+                            thumbnailProvider = thumbnailProvider,
+                            onClipSelected = { index ->
+                                onEvent(
+                                    EditorContract.Event.SeekTo(
+                                        clipStartPositionMs(state.selectedMedia, index)
+                                    )
+                                )
+                            },
+                            onReorderMedia = { from, to ->
+                                onEvent(EditorContract.Event.ReorderMedia(from, to))
+                            },
+                            onMuteToggle = { onEvent(EditorContract.Event.ToggleMute) },
+                            onAddMedia = { onEvent(EditorContract.Event.AddMediaClicked) },
+                            onAddAudio = { onEvent(EditorContract.Event.AddAudioClicked) },
+                            onRemoveAudio = { onEvent(EditorContract.Event.RemoveAudioTrack) },
+                        )
 
-                        item {
-                            EditorSectionHeader(
-                                eyebrow = "EXPORT",
-                                title = "Final readiness",
-                                subtitle = "Make sure the project is clean before moving forward."
-                            )
-                        }
+                        EditorBottomToolbar(
+                            activeTab = state.activeToolbarTab,
+                            onTabSelected = { tab ->
+                                onEvent(EditorContract.Event.ToolbarTabSelected(tab))
+                            },
+                            modifier = Modifier.navigationBarsPadding(),
+                        )
+                    }
 
-                        item {
-                            ExportReadinessPanel(
-                                state = state,
-                                onExportClick = {
-                                    onEvent(EditorContract.Event.ExportClicked)
-                                }
-                            )
-                        }
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        CaptionsPanel(
+                            visible = state.showCaptionsPanel && !state.showAutoCaptionsSheet,
+                            onOptionSelected = { option ->
+                                onEvent(EditorContract.Event.CaptionsOptionSelected(option))
+                            },
+                            onDismiss = { onEvent(EditorContract.Event.DismissCaptionsPanel) },
+                            modifier = Modifier.align(Alignment.BottomCenter),
+                        )
 
-                        item {
-                            Spacer(modifier = Modifier.navigationBarsPadding())
-                        }
+                        AutoCaptionsSheet(
+                            visible = state.showAutoCaptionsSheet,
+                            config = state.autoCaptionsConfig,
+                            onLanguageChanged = { lang ->
+                                onEvent(EditorContract.Event.AutoCaptionsLanguageChanged(lang))
+                            },
+                            onFillerWordsToggled = { enabled ->
+                                onEvent(EditorContract.Event.AutoCaptionsFillerWordsToggled(enabled))
+                            },
+                            onSourceChanged = { source ->
+                                onEvent(EditorContract.Event.AutoCaptionsSourceChanged(source))
+                            },
+                            onGenerate = { onEvent(EditorContract.Event.GenerateAutoCaptions) },
+                            onDismiss = { onEvent(EditorContract.Event.DismissAutoCaptionsSheet) },
+                            modifier = Modifier.align(Alignment.BottomCenter),
+                        )
                     }
                 }
             }
@@ -347,771 +394,540 @@ private fun EditorScreenContent(
 }
 
 @Composable
-private fun EditorBackgroundGlow() {
-    val colors = SparkCutTheme.colors
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier
-                .size(280.dp)
-                .offset(x = (-70).dp, y = (-20).dp)
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            colors.primary.copy(alpha = 0.14f),
-                            Color.Transparent
-                        )
-                    ),
-                    shape = CircleShape
-                )
-        )
-
-        Box(
-            modifier = Modifier
-                .size(240.dp)
-                .align(Alignment.TopEnd)
-                .offset(x = 55.dp, y = 110.dp)
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            Color(0xFF8B5CF6).copy(alpha = 0.12f),
-                            Color.Transparent
-                        )
-                    ),
-                    shape = CircleShape
-                )
-        )
-    }
-}
-
-@Composable
-private fun EditorTopHeader(
-    autosaveState: EditorContract.AutosaveState,
-    onBack: () -> Unit,
+private fun EditorTopBar(
+    state: EditorContract.State,
+    onClose: () -> Unit,
+    onExport: () -> Unit,
+    onAspectRatioSelected: (String) -> Unit = {},
 ) {
-    val colors = SparkCutTheme.colors
+    var showResolutionMenu by remember { mutableStateOf(false) }
+    var showAspectRatioMenu by remember { mutableStateOf(false) }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .statusBarsPadding(),
-        verticalAlignment = Alignment.CenterVertically
+            .statusBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Surface(
-            modifier = Modifier.size(42.dp),
-            shape = RoundedCornerShape(14.dp),
-            color = colors.surfaceElevated,
-            border = BorderStroke(
-                width = 1.dp,
-                color = colors.strokeSoft.copy(alpha = 0.85f)
+        IconButton(onClick = onClose) {
+            Icon(
+                imageVector = Icons.Outlined.Close,
+                contentDescription = "Close",
+                tint = EditorColors.TextPrimary,
             )
-        ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.clickable(onClick = onBack)
+        }
+
+        Spacer(modifier = Modifier.width(4.dp))
+
+        Text(
+            text = state.projectName,
+            color = EditorColors.TextPrimary,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        Box {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(EditorColors.Surface)
+                    .border(1.dp, EditorColors.Border, RoundedCornerShape(8.dp))
+                    .clickable { showAspectRatioMenu = !showAspectRatioMenu }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                    contentDescription = "Back",
-                    tint = colors.textPrimary,
-                    modifier = Modifier.size(20.dp)
+                Text(
+                    text = state.selectedAspectRatio,
+                    color = EditorColors.TextPrimary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = " \u25BE",
+                    color = EditorColors.TextSecondary,
+                    fontSize = 11.sp,
                 )
             }
-        }
 
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Column(
-            modifier = Modifier.weight(1f)
-        ) {
-            Text(
-                text = "Editor",
-                style = SparkCutTheme.typography.sectionTitle,
-                color = colors.textPrimary
-            )
-            Text(
-                text = "Refine, reorder and prepare",
-                style = SparkCutTheme.typography.meta,
-                color = colors.textMuted
-            )
-        }
-
-        MinimalEditorChip(
-            text = editorAutosaveChipText(autosaveState),
-            textColor = when (autosaveState.status) {
-                EditorContract.AutosaveState.Status.Idle -> colors.textSecondary
-                EditorContract.AutosaveState.Status.Saving -> colors.primary
-                EditorContract.AutosaveState.Status.Saved -> Color(0xFF69E3A7)
-                EditorContract.AutosaveState.Status.Error -> Color(0xFFFF8A8A)
-            },
-            containerColor = when (autosaveState.status) {
-                EditorContract.AutosaveState.Status.Idle -> colors.surfaceElevated
-                EditorContract.AutosaveState.Status.Saving -> colors.primaryMuted
-                EditorContract.AutosaveState.Status.Saved -> Color(0xFF173126)
-                EditorContract.AutosaveState.Status.Error -> Color(0xFF31191C)
-            },
-            borderColor = when (autosaveState.status) {
-                EditorContract.AutosaveState.Status.Idle -> colors.strokeSoft
-                EditorContract.AutosaveState.Status.Saving -> colors.primary.copy(alpha = 0.24f)
-                EditorContract.AutosaveState.Status.Saved -> Color(0xFF69E3A7).copy(alpha = 0.22f)
-                EditorContract.AutosaveState.Status.Error -> Color(0xFFFF8A8A).copy(alpha = 0.22f)
+            DropdownMenu(
+                expanded = showAspectRatioMenu,
+                onDismissRequest = { showAspectRatioMenu = false },
+            ) {
+                state.availableAspectRatios.forEach { ratio ->
+                    DropdownMenuItem(
+                        text = { Text(ratio) },
+                        onClick = {
+                            onAspectRatioSelected(ratio)
+                            showAspectRatioMenu = false
+                        },
+                    )
+                }
             }
-        )
+        }
+
+        Spacer(modifier = Modifier.width(4.dp))
+
+        Box {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(EditorColors.Surface)
+                    .border(1.dp, EditorColors.Border, RoundedCornerShape(8.dp))
+                    .clickable { showResolutionMenu = !showResolutionMenu }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "1080P",
+                    color = EditorColors.TextPrimary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = " \u25BE",
+                    color = EditorColors.TextSecondary,
+                    fontSize = 11.sp,
+                )
+            }
+
+            DropdownMenu(
+                expanded = showResolutionMenu,
+                onDismissRequest = { showResolutionMenu = false },
+            ) {
+                listOf("720P", "1080P", "4K").forEach { res ->
+                    DropdownMenuItem(
+                        text = { Text(res) },
+                        onClick = { showResolutionMenu = false },
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.width(4.dp))
+
+        IconButton(onClick = onExport) {
+            Icon(
+                imageVector = Icons.Outlined.Upload,
+                contentDescription = "Export",
+                tint = EditorColors.TextPrimary,
+            )
+        }
     }
 }
 
 @Composable
-private fun EditorHeroSection(
+private fun VideoPreviewArea(
     state: EditorContract.State,
+    selectedMedia: EditorContract.SelectedMediaItem?,
+    exoPlayer: ExoPlayer,
+    thumbnailProvider: MediaThumbnailProvider,
+    onTogglePlay: () -> Unit,
 ) {
-    val template = state.template ?: return
-    val colors = SparkCutTheme.colors
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(32.dp),
-        color = Color.Transparent,
-        border = BorderStroke(
-            width = 1.dp,
-            color = colors.strokeStrong.copy(alpha = 0.65f)
-        )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .clickable(onClick = onTogglePlay),
+        contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .background(
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            colors.surfaceFocused,
-                            Color(0xFF171D31),
-                            Color(0xFF101722)
-                        )
-                    )
+        when {
+            selectedMedia == null -> {
+                EmptyPreviewPlaceholder(isVideo = true, modifier = Modifier.fillMaxSize())
+            }
+
+            selectedMedia.isVideo -> {
+                ExoPlayerSurface(
+                    exoPlayer = exoPlayer,
+                    modifier = Modifier.fillMaxSize(),
                 )
-                .padding(22.dp)
+            }
+
+            else -> {
+                PreviewMediaThumbnail(
+                    item = selectedMedia,
+                    thumbnailProvider = thumbnailProvider,
+                )
+            }
+        }
+
+        if (state.textFields.isNotEmpty()) {
+            val textValue = state.textFields.first().value.ifBlank {
+                state.textFields.first().placeholder
+            }
+            if (textValue.isNotBlank()) {
+                Text(
+                    text = textValue,
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(horizontal = 24.dp, vertical = 20.dp),
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = !state.isPlaying,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(400)),
         ) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .size(140.dp)
-                    .offset(x = 26.dp, y = (-18).dp)
-                    .background(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                colors.primary.copy(alpha = 0.18f),
-                                Color.Transparent
-                            )
-                        ),
-                        shape = CircleShape
-                    )
-            )
-
-            Column(
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .border(1.dp, Color.White.copy(alpha = 0.15f), CircleShape),
+                contentAlignment = Alignment.Center,
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    HeroChip(template.categoryLabel)
-                    HeroChip(template.aspectRatioLabel)
-                    HeroChip(if (state.canExport) "Ready" else "Editing")
-                }
-
-                Text(
-                    text = template.name,
-                    style = SparkCutTheme.typography.display.copy(
-                        fontWeight = FontWeight.ExtraBold
-                    ),
-                    color = colors.textPrimary
+                Icon(
+                    imageVector = Icons.Outlined.PlayArrow,
+                    contentDescription = "Play",
+                    tint = Color.White,
+                    modifier = Modifier.size(30.dp),
                 )
-
-                Text(
-                    text = template.description,
-                    style = SparkCutTheme.typography.body,
-                    color = colors.textSecondary
-                )
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    StatChip("${state.selectedMedia.size} media")
-                    StatChip("${state.textFields.size} text fields")
-                    StatChip("${state.transitions.size} transitions")
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = colors.surface.copy(alpha = 0.82f),
-                    border = BorderStroke(
-                        width = 1.dp,
-                        color = colors.strokeSoft.copy(alpha = 0.85f)
-                    )
-                ) {
-                    Text(
-                        text = editorAutosaveSecondaryText(state.autosaveState),
-                        modifier = Modifier.padding(
-                            horizontal = 14.dp,
-                            vertical = 10.dp
-                        ),
-                        style = SparkCutTheme.typography.meta,
-                        color = if (state.autosaveState.status == EditorContract.AutosaveState.Status.Error) {
-                            Color(0xFFFF8A8A)
-                        } else {
-                            colors.textSecondary
-                        }
-                    )
-                }
             }
         }
-    }
-}
 
-@Composable
-private fun ValidationSpotlightCard(
-    errors: List<String>,
-    warnings: List<String>,
-) {
-    val colors = SparkCutTheme.colors
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        color = colors.surface,
-        border = BorderStroke(
-            width = 1.dp,
-            color = when {
-                errors.isNotEmpty() -> Color(0xFFFF8A8A).copy(alpha = 0.22f)
-                warnings.isNotEmpty() -> Color(0xFFFFC46B).copy(alpha = 0.22f)
-                else -> colors.strokeSoft
-            }
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Text(
-                text = when {
-                    errors.isNotEmpty() -> "Validation issues found"
-                    warnings.isNotEmpty() -> "Review before export"
-                    else -> "Validation"
-                },
-                style = SparkCutTheme.typography.sectionTitle,
-                color = colors.textPrimary
-            )
-
-            if (errors.isNotEmpty()) {
-                errors.forEach { message ->
-                    IssueLine(
-                        message = message,
-                        accent = Color(0xFFFF8A8A)
-                    )
-                }
-            }
-
-            if (warnings.isNotEmpty()) {
-                warnings.forEach { message ->
-                    IssueLine(
-                        message = message,
-                        accent = Color(0xFFFFC46B)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun IssueLine(
-    message: String,
-    accent: Color,
-) {
-    val colors = SparkCutTheme.colors
-
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.Top
-    ) {
         Box(
             modifier = Modifier
-                .padding(top = 7.dp)
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(accent)
-        )
-
-        Text(
-            text = message,
-            style = SparkCutTheme.typography.body,
-            color = colors.textSecondary
-        )
-    }
-}
-
-@Composable
-private fun EditorSectionHeader(
-    eyebrow: String,
-    title: String,
-    subtitle: String,
-) {
-    val colors = SparkCutTheme.colors
-
-    Column(
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Text(
-            text = eyebrow,
-            style = SparkCutTheme.typography.label,
-            color = colors.primary
-        )
-        Text(
-            text = title,
-            style = SparkCutTheme.typography.sectionTitle,
-            color = colors.textPrimary
-        )
-        Text(
-            text = subtitle,
-            style = SparkCutTheme.typography.body,
-            color = colors.textSecondary
-        )
-    }
-}
-
-@Composable
-private fun EmptyEditorCard(
-    title: String,
-    message: String,
-) {
-    val colors = SparkCutTheme.colors
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        color = colors.surface,
-        border = BorderStroke(
-            width = 1.dp,
-            color = colors.strokeSoft.copy(alpha = 0.9f)
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.AutoAwesome,
-                contentDescription = null,
-                tint = colors.textSecondary,
-                modifier = Modifier.size(24.dp)
-            )
-
-            Text(
-                text = title,
-                style = SparkCutTheme.typography.sectionTitle,
-                color = colors.textPrimary
-            )
-
-            Text(
-                text = message,
-                style = SparkCutTheme.typography.body,
-                color = colors.textSecondary
-            )
-        }
-    }
-}
-
-@Composable
-private fun TextFieldsPanel(
-    state: EditorContract.State,
-    onEvent: (EditorContract.Event) -> Unit,
-) {
-    val colors = SparkCutTheme.colors
-    val spacing = SparkCutTheme.spacing
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        color = colors.surface,
-        border = BorderStroke(
-            width = 1.dp,
-            color = colors.strokeSoft.copy(alpha = 0.9f)
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(spacing.sm)
-        ) {
-            if (state.textFields.isEmpty()) {
-                Text(
-                    text = "No editable text fields for this template.",
-                    style = SparkCutTheme.typography.body,
-                    color = colors.textSecondary
-                )
-            } else {
-                state.textFields.forEach { field ->
-                    SparkCutTextField(
-                        value = field.value,
-                        onValueChange = {
-                            onEvent(
-                                EditorContract.Event.TextChanged(
-                                    fieldId = field.id,
-                                    value = it,
-                                )
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = if (field.required) {
-                            "${field.label} *"
-                        } else {
-                            field.label
-                        },
-                        placeholder = field.placeholder,
-                        supportingText = "${field.value.length}/${field.maxLength}",
-                        errorText = if (field.required && field.value.isBlank()) {
-                            "Required field"
-                        } else {
-                            null
-                        },
-                        minLines = 3,
-                        maxLines = 5
+                .fillMaxWidth()
+                .height(80.dp)
+                .align(Alignment.BottomCenter)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.6f)),
                     )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TransitionPanel(
-    transitions: List<EditorContract.TransitionItem>,
-    onSelect: (com.muratcangzm.model.template.TransitionPreset) -> Unit,
-) {
-    val colors = SparkCutTheme.colors
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        color = colors.surface,
-        border = BorderStroke(
-            width = 1.dp,
-            color = colors.strokeSoft.copy(alpha = 0.9f)
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(
-                    items = transitions,
-                    key = { it.preset.name }
-                ) { item ->
-                    TransitionChoicePill(
-                        label = item.label,
-                        selected = item.isSelected,
-                        onClick = {
-                            onSelect(item.preset)
-                        }
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TransitionChoicePill(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    val colors = SparkCutTheme.colors
-
-    Surface(
-        modifier = Modifier
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(18.dp),
-        color = if (selected) {
-            colors.primaryMuted
-        } else {
-            colors.surfaceElevated
-        },
-        border = BorderStroke(
-            width = 1.dp,
-            color = if (selected) {
-                colors.primary.copy(alpha = 0.28f)
-            } else {
-                colors.strokeSoft.copy(alpha = 0.85f)
-            }
-        )
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier.padding(
-                horizontal = 14.dp,
-                vertical = 11.dp
-            ),
-            style = SparkCutTheme.typography.bodyStrong,
-            color = if (selected) colors.primary else colors.textSecondary
+                ),
         )
     }
 }
 
+@OptIn(UnstableApi::class)
 @Composable
-private fun EditorMediaCard(
-    item: EditorContract.SelectedMediaItem,
-    thumbnailProvider: MediaThumbnailProvider,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
-    onTrimChanged: (Long, Long) -> Unit,
+private fun ExoPlayerSurface(
+    exoPlayer: ExoPlayer,
     modifier: Modifier = Modifier,
 ) {
-    val colors = SparkCutTheme.colors
-    val spacing = SparkCutTheme.spacing
+    AndroidView(
+        modifier = modifier,
+        factory = { context ->
+            PlayerView(context).apply {
+                player = exoPlayer
+                useController = false
+                setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                setBackgroundColor(android.graphics.Color.BLACK)
+            }
+        },
+        update = { playerView ->
+            if (playerView.player != exoPlayer) {
+                playerView.player = exoPlayer
+            }
+        },
+    )
+}
 
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        color = colors.surface,
-        border = BorderStroke(
-            width = 1.dp,
-            color = colors.strokeSoft.copy(alpha = 0.9f)
+@Composable
+private fun PreviewMediaThumbnail(
+    item: EditorContract.SelectedMediaItem,
+    thumbnailProvider: MediaThumbnailProvider,
+) {
+    val bitmap by rememberThumbnailBitmap(
+        uri = item.uri,
+        sizePx = 640,
+        thumbnailProvider = thumbnailProvider,
+    )
+
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap!!.asImageBitmap(),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop,
         )
+    } else {
+        EmptyPreviewPlaceholder(isVideo = false, modifier = Modifier.fillMaxSize())
+    }
+}
+
+@Composable
+private fun PlaybackControlStrip(
+    state: EditorContract.State,
+    onTogglePlay: () -> Unit,
+    onSeekBack: () -> Unit,
+    onSeekForward: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(EditorColors.ScreenBackground)
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
     ) {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+        Text(
+            text = timelineTime(state.playbackPositionMs),
+            color = EditorColors.TextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+        )
+
+        Text(
+            text = " / ",
+            color = EditorColors.TextMuted,
+            fontSize = 14.sp,
+        )
+
+        Text(
+            text = timelineTime(state.totalDurationMs),
+            color = EditorColors.TextSecondary,
+            fontSize = 14.sp,
+        )
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(spacing.md),
-                verticalAlignment = Alignment.CenterVertically
+            SmallControlButton(
+                icon = Icons.Outlined.FastRewind,
+                onClick = onSeekBack,
+            )
+
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(EditorColors.Accent)
+                    .clickable(onClick = onTogglePlay),
+                contentAlignment = Alignment.Center,
             ) {
-                EditorMediaThumbnailBox(
-                    uri = item.uri,
-                    isVideo = item.isVideo,
-                    thumbnailProvider = thumbnailProvider,
+                Icon(
+                    imageVector = if (state.isPlaying) Icons.Outlined.Pause
+                    else Icons.Outlined.PlayArrow,
+                    contentDescription = null,
+                    tint = Color(0xFF0A0F14),
+                    modifier = Modifier.size(20.dp),
                 )
-
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        MinimalEditorChip(
-                            text = "Item ${item.order + 1}",
-                            textColor = colors.textSecondary,
-                            containerColor = colors.surfaceElevated,
-                            borderColor = colors.strokeSoft
-                        )
-                        MinimalEditorChip(
-                            text = item.slotLabel,
-                            textColor = colors.primary,
-                            containerColor = colors.primaryMuted,
-                            borderColor = colors.primary.copy(alpha = 0.20f)
-                        )
-                        MinimalEditorChip(
-                            text = item.typeLabel,
-                            textColor = if (item.isVideo) Color(0xFF6FD3FF) else Color(0xFF69E3A7),
-                            containerColor = if (item.isVideo) Color(0xFF112533) else Color(0xFF173126),
-                            borderColor = if (item.isVideo) Color(0xFF6FD3FF).copy(alpha = 0.18f) else Color(0xFF69E3A7).copy(alpha = 0.18f)
-                        )
-                    }
-
-                    Text(
-                        text = item.fileName,
-                        style = SparkCutTheme.typography.sectionTitle,
-                        color = colors.textPrimary
-                    )
-
-                    item.resolutionLabel?.let { resolution ->
-                        Text(
-                            text = "Resolution: $resolution",
-                            style = SparkCutTheme.typography.meta,
-                            color = colors.textMuted
-                        )
-                    }
-
-                    item.durationLabel?.let { duration ->
-                        Text(
-                            text = "Duration: $duration",
-                            style = SparkCutTheme.typography.meta,
-                            color = colors.textMuted
-                        )
-                    }
-
-                    item.mimeType?.let { mimeType ->
-                        Text(
-                            text = mimeType,
-                            style = SparkCutTheme.typography.meta,
-                            color = colors.textMuted
-                        )
-                    }
-                }
             }
 
-            if (
-                item.canTrim &&
-                item.sourceDurationMs != null &&
-                item.trimStartMs != null &&
-                item.trimEndMs != null
-            ) {
-                var currentStart by remember(item.uri, item.trimStartMs) {
-                    mutableFloatStateOf(item.trimStartMs.toFloat())
-                }
-                var currentEnd by remember(item.uri, item.trimEndMs) {
-                    mutableFloatStateOf(item.trimEndMs.toFloat())
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = colors.surfaceElevated,
-                    border = BorderStroke(
-                        width = 1.dp,
-                        color = colors.strokeSoft.copy(alpha = 0.8f)
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text(
-                            text = "Trim window",
-                            style = SparkCutTheme.typography.cardTitle,
-                            color = colors.textPrimary
-                        )
-
-                        Text(
-                            text = "${MediaDurationFormatter.format(currentStart.toLong())} - ${
-                                MediaDurationFormatter.format(currentEnd.toLong())
-                            }",
-                            style = SparkCutTheme.typography.meta,
-                            color = colors.textMuted
-                        )
-
-                        RangeSlider(
-                            value = currentStart..currentEnd,
-                            onValueChange = { range ->
-                                currentStart = range.start
-                                currentEnd = range.endInclusive
-                            },
-                            onValueChangeFinished = {
-                                onTrimChanged(
-                                    currentStart.toLong(),
-                                    currentEnd.toLong(),
-                                )
-                            },
-                            valueRange = 0f..item.sourceDurationMs.toFloat(),
-                        )
-                    }
-                }
-            }
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                FilledTonalIconButton(
-                    onClick = onMoveUp,
-                    enabled = item.canMoveUp,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.ArrowUpward,
-                        contentDescription = "Move up",
-                    )
-                }
-
-                FilledTonalIconButton(
-                    onClick = onMoveDown,
-                    enabled = item.canMoveDown,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.ArrowDownward,
-                        contentDescription = "Move down",
-                    )
-                }
-            }
+            SmallControlButton(
+                icon = Icons.Outlined.FastForward,
+                onClick = onSeekForward,
+            )
         }
     }
 }
 
 @Composable
-private fun ExportReadinessPanel(
-    state: EditorContract.State,
-    onExportClick: () -> Unit,
+private fun SmallControlButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
 ) {
-    val colors = SparkCutTheme.colors
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        color = colors.surface,
-        border = BorderStroke(
-            width = 1.dp,
-            color = when {
-                state.validationErrors.isNotEmpty() -> Color(0xFFFF8A8A).copy(alpha = 0.22f)
-                state.hasMissingRequiredFields || state.validationWarnings.isNotEmpty() -> Color(0xFFFFC46B).copy(alpha = 0.22f)
-                else -> colors.primary.copy(alpha = 0.20f)
-            }
-        )
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier.size(32.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = EditorColors.TextSecondary,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+@Composable
+private fun TimelineSection(
+    state: EditorContract.State,
+    selectedMediaIndex: Int,
+    thumbnailProvider: MediaThumbnailProvider,
+    onClipSelected: (Int) -> Unit,
+    onReorderMedia: (Int, Int) -> Unit,
+    onMuteToggle: () -> Unit,
+    onAddMedia: () -> Unit,
+    onAddAudio: () -> Unit,
+    onRemoveAudio: () -> Unit,
+) {
+    if (state.selectedMedia.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(120.dp)
+                .background(EditorColors.TimelineSurface)
+                .padding(16.dp),
+            contentAlignment = Alignment.Center,
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Text(
+                text = "No media in timeline",
+                color = EditorColors.TextMuted,
+                fontSize = 13.sp,
+            )
+        }
+        return
+    }
+
+    val scrollState = rememberScrollState()
+    var viewportWidthPx by remember { mutableIntStateOf(0) }
+
+    val clipWidths = remember(state.selectedMedia) {
+        state.selectedMedia.map { item ->
+            val durationSeconds = item.effectiveDurationMs / 1000f
+            max(100f, durationSeconds * 60f)
+        }
+    }
+
+    val totalTimelineWidth = remember(clipWidths) {
+        val widthSum = clipWidths.fold(0f) { acc, w -> acc + w }
+        max(400f, widthSum + 40f)
+    }
+
+    val playheadOffsetPx = remember(state.playbackPositionMs, clipWidths, state.selectedMedia) {
+        computePlayheadOffset(state.selectedMedia, state.playbackPositionMs, clipWidths)
+    }
+
+    LaunchedEffect(playheadOffsetPx, viewportWidthPx, scrollState.maxValue) {
+        if (viewportWidthPx <= 0) return@LaunchedEffect
+        val target = (playheadOffsetPx - viewportWidthPx / 2f)
+            .roundToInt()
+            .coerceIn(0, scrollState.maxValue)
+        if (abs(scrollState.value - target) > 20) {
+            scrollState.animateScrollTo(target)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(EditorColors.TimelineSurface),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(
+                onClick = onMuteToggle,
+                modifier = Modifier.size(28.dp),
             ) {
-                HeroChip(if (state.canExport) "Ready" else "Needs review")
-                HeroChip(if (state.validationErrors.isNotEmpty()) "Blocked" else "Export flow")
+                Icon(
+                    imageVector = if (state.isMuted) Icons.AutoMirrored.Outlined.VolumeOff
+                    else Icons.AutoMirrored.Outlined.VolumeUp,
+                    contentDescription = "Mute",
+                    tint = if (state.isMuted) EditorColors.TextMuted else EditorColors.TextSecondary,
+                    modifier = Modifier.size(16.dp),
+                )
             }
 
-            Text(
-                text = if (state.canExport) {
-                    "Ready for export"
-                } else {
-                    "Not ready yet"
-                },
-                style = SparkCutTheme.typography.sectionTitle,
-                color = colors.textPrimary
-            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .onSizeChanged { viewportWidthPx = it.width }
+                    .horizontalScroll(scrollState),
+            ) {
+                val timelineHeight = if (state.audioTrack != null) (64 + 4 + 40).dp else 64.dp
 
-            Text(
-                text = when {
-                    state.isResolvingMedia -> "Media is still being prepared."
-                    state.validationErrors.isNotEmpty() -> "Resolve blocking issues before continuing."
-                    state.hasMissingRequiredFields -> "Complete all required text fields before export."
-                    state.validationWarnings.isNotEmpty() -> "Review warnings before moving forward."
-                    else -> "Project settings look clean and ready for output."
-                },
-                style = SparkCutTheme.typography.body,
-                color = colors.textSecondary
-            )
+                Box(
+                    modifier = Modifier
+                        .width(totalTimelineWidth.dp)
+                        .height(timelineHeight),
+                ) {
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(64.dp)
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            TimelineMediaRow(
+                                clipWidths = clipWidths,
+                                state = state,
+                                selectedMediaIndex = selectedMediaIndex,
+                                thumbnailProvider = thumbnailProvider,
+                                onClipSelected = onClipSelected,
+                                onReorderMedia = onReorderMedia,
+                            )
+                        }
 
-            if (state.canExport) {
-                Button(
-                    onClick = onExportClick,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.primary,
-                        contentColor = colors.background
-                    ),
-                    contentPadding = PaddingValues(
-                        horizontal = 18.dp,
-                        vertical = 16.dp
+                        if (state.audioTrack != null) {
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            AudioTrackRow(
+                                audioTrack = state.audioTrack,
+                                totalTimelineWidth = totalTimelineWidth,
+                                onRemove = onRemoveAudio,
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .width(2.dp)
+                            .fillMaxHeight()
+                            .background(EditorColors.Accent)
+                            .graphicsLayer { translationX = playheadOffsetPx },
                     )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(EditorColors.Surface)
+                    .border(1.dp, EditorColors.Border, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onAddMedia),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Add,
+                    contentDescription = "Add clip",
+                    tint = EditorColors.TextSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+
+        if (state.audioTrack == null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+                    .padding(bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(EditorColors.Surface)
+                        .border(1.dp, EditorColors.Border, RoundedCornerShape(8.dp))
+                        .clickable(onClick = onAddAudio)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Icon(
-                        imageVector = Icons.Outlined.MovieCreation,
+                        imageVector = Icons.Outlined.MusicNote,
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp)
+                        tint = EditorColors.TextMuted,
+                        modifier = Modifier.size(12.dp),
                     )
-                    Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "Continue to export",
-                        style = SparkCutTheme.typography.button
+                        text = "Add audio",
+                        color = EditorColors.TextMuted,
+                        fontSize = 11.sp,
                     )
                 }
             }
@@ -1120,267 +936,538 @@ private fun ExportReadinessPanel(
 }
 
 @Composable
-private fun EditorBottomBar(
-    state: EditorContract.State,
-    onExportClick: () -> Unit,
+private fun AudioTrackRow(
+    audioTrack: EditorContract.AudioTrackItem,
+    totalTimelineWidth: Float,
+    onRemove: () -> Unit,
 ) {
-    val colors = SparkCutTheme.colors
+    val audioWidthFraction = if (audioTrack.durationMs > 0L) {
+        (audioTrack.effectiveDurationMs / 1000f * 60f) / totalTimelineWidth
+    } else 1f
 
     Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .fillMaxWidth(audioWidthFraction.coerceIn(0.1f, 1f))
+            .height(40.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(EditorColors.AccentAlt.copy(alpha = 0.18f))
+            .border(1.dp, EditorColors.AccentAlt.copy(alpha = 0.4f), RoundedCornerShape(8.dp)),
     ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(26.dp),
-            color = colors.surface.copy(alpha = 0.96f),
-            border = BorderStroke(
-                width = 1.dp,
-                color = colors.strokeSoft.copy(alpha = 0.85f)
-            )
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+            Icon(
+                imageVector = Icons.Outlined.MusicNote,
+                contentDescription = null,
+                tint = EditorColors.AccentAlt,
+                modifier = Modifier.size(14.dp),
+            )
+
+            Spacer(modifier = Modifier.width(6.dp))
+
+            Text(
+                text = audioTrack.fileName,
+                color = EditorColors.TextPrimary,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+
+            Spacer(modifier = Modifier.width(4.dp))
+
+            Text(
+                text = timelineTime(audioTrack.effectiveDurationMs),
+                color = EditorColors.TextSecondary,
+                fontSize = 9.sp,
+            )
+
+            Spacer(modifier = Modifier.width(4.dp))
+
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .clip(CircleShape)
+                    .background(EditorColors.Surface)
+                    .clickable(onClick = onRemove),
+                contentAlignment = Alignment.Center,
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    MinimalEditorChip(
-                        text = editorBottomBarStatusText(state),
-                        textColor = when {
-                            state.validationErrors.isNotEmpty() -> Color(0xFFFF8A8A)
-                            state.canExport -> Color(0xFF69E3A7)
-                            else -> SparkCutTheme.colors.primary
-                        },
-                        containerColor = when {
-                            state.validationErrors.isNotEmpty() -> Color(0xFF31191C)
-                            state.canExport -> Color(0xFF173126)
-                            else -> colors.primaryMuted
-                        },
-                        borderColor = when {
-                            state.validationErrors.isNotEmpty() -> Color(0xFFFF8A8A).copy(alpha = 0.18f)
-                            state.canExport -> Color(0xFF69E3A7).copy(alpha = 0.18f)
-                            else -> colors.primary.copy(alpha = 0.20f)
-                        }
-                    )
-
-                    Spacer(modifier = Modifier.weight(1f))
-
-                    Text(
-                        text = editorAutosaveSecondaryText(state.autosaveState),
-                        style = SparkCutTheme.typography.meta,
-                        color = if (state.autosaveState.status == EditorContract.AutosaveState.Status.Error) {
-                            Color(0xFFFF8A8A)
-                        } else {
-                            colors.textMuted
-                        }
-                    )
-                }
-
-                Text(
-                    text = editorBottomBarSummaryText(state),
-                    style = SparkCutTheme.typography.body,
-                    color = colors.textSecondary
-                )
-
-                SparkCutPrimaryButton(
-                    text = if (state.isResolvingMedia) {
-                        "Preparing project..."
-                    } else {
-                        "Continue to export"
-                    },
-                    onClick = onExportClick,
-                    enabled = state.canExport,
-                    loading = state.isResolvingMedia,
-                    size = SparkCutButtonSize.Large,
-                    modifier = Modifier.fillMaxWidth(),
-                    leadingContent = {
-                        Icon(
-                            imageVector = Icons.Outlined.MovieCreation,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                Icon(
+                    imageVector = Icons.Outlined.Close,
+                    contentDescription = "Remove audio",
+                    tint = EditorColors.TextMuted,
+                    modifier = Modifier.size(10.dp),
                 )
             }
+        }
+
+        AudioWaveformDecoration(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = 0.15f },
+        )
+    }
+}
+
+@Composable
+private fun AudioWaveformDecoration(modifier: Modifier = Modifier) {
+    val barCount = 40
+    val bars = remember {
+        List(barCount) { index ->
+            val normalized = index.toFloat() / barCount
+            val wave = kotlin.math.sin(normalized * Math.PI * 4).toFloat()
+            0.25f + 0.75f * abs(wave)
+        }
+    }
+
+    Row(
+        modifier = modifier.padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        bars.forEach { height ->
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(height)
+                    .padding(horizontal = 0.5.dp)
+                    .background(
+                        EditorColors.AccentAlt,
+                        RoundedCornerShape(1.dp),
+                    ),
+            )
         }
     }
 }
 
 @Composable
-private fun EditorMediaThumbnailBox(
-    uri: String,
-    isVideo: Boolean,
+private fun TimelineMediaRow(
+    clipWidths: List<Float>,
+    state: EditorContract.State,
+    selectedMediaIndex: Int,
+    thumbnailProvider: MediaThumbnailProvider,
+    onClipSelected: (Int) -> Unit,
+    onReorderMedia: (Int, Int) -> Unit,
+) {
+    val density = LocalDensity.current
+    val spacingPx = with(density) { 6.dp.toPx() }
+    val clipWidthsPx = remember(clipWidths, density) {
+        clipWidths.map { with(density) { it.dp.toPx() } }
+    }
+
+    var draggedIndex by remember { mutableIntStateOf(-1) }
+    var dragOffsetPx by remember { mutableFloatStateOf(0f) }
+
+    fun findTargetIndex(centerX: Float): Int {
+        var cursor = 0f
+        clipWidthsPx.forEachIndexed { index, widthPx ->
+            val itemCenter = cursor + widthPx / 2f
+            if (centerX < itemCenter) return index
+            cursor += widthPx + spacingPx
+        }
+        return clipWidthsPx.lastIndex
+    }
+
+    state.selectedMedia.forEachIndexed { index, item ->
+        val currentTranslation = if (draggedIndex == index) dragOffsetPx else 0f
+        val currentWidthPx = clipWidthsPx.getOrNull(index) ?: 0f
+
+        TimelineClipCell(
+            item = item,
+            width = clipWidths.getOrNull(index) ?: 100f,
+            selected = index == selectedMediaIndex,
+            thumbnailProvider = thumbnailProvider,
+            modifier = Modifier
+                .zIndex(if (draggedIndex == index) 2f else 0f)
+                .graphicsLayer {
+                    translationX = currentTranslation
+                    scaleX = if (draggedIndex == index) 1.04f else 1f
+                    scaleY = if (draggedIndex == index) 1.04f else 1f
+                    alpha = if (draggedIndex == index) 0.92f else 1f
+                }
+                .pointerInput(index, clipWidthsPx) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = {
+                            draggedIndex = index
+                            dragOffsetPx = 0f
+                        },
+                        onDragCancel = {
+                            draggedIndex = -1
+                            dragOffsetPx = 0f
+                        },
+                        onDragEnd = {
+                            if (draggedIndex == index) {
+                                var originalStart = 0f
+                                repeat(index) { prev ->
+                                    originalStart += clipWidthsPx[prev] + spacingPx
+                                }
+                                val draggedCenter =
+                                    originalStart + dragOffsetPx + (currentWidthPx / 2f)
+                                val targetIndex = findTargetIndex(draggedCenter)
+                                if (targetIndex != index) {
+                                    onReorderMedia(index, targetIndex)
+                                }
+                            }
+                            draggedIndex = -1
+                            dragOffsetPx = 0f
+                        },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            if (draggedIndex == index) {
+                                dragOffsetPx += dragAmount.x
+                            }
+                        },
+                    )
+                },
+            onClick = { onClipSelected(index) },
+        )
+    }
+}
+
+@Composable
+private fun TimelineClipCell(
+    item: EditorContract.SelectedMediaItem,
+    width: Float,
+    selected: Boolean,
     thumbnailProvider: MediaThumbnailProvider,
     modifier: Modifier = Modifier,
+    onClick: () -> Unit,
 ) {
-    val colors = SparkCutTheme.colors
-
-    val thumbnail by produceState<Bitmap?>(
-        initialValue = null,
-        key1 = uri,
-        key2 = isVideo,
-    ) {
-        value = withContext(Dispatchers.IO) {
-            thumbnailProvider.loadThumbnail(
-                uri = uri,
-                sizePx = 280,
-            )
-        }
+    val context = LocalContext.current
+    val frameCount = remember(width) {
+        (width / 50f).roundToInt().coerceIn(2, 6)
     }
+
+    val frameStrip by rememberTimelineStripBitmaps(
+        context = context,
+        item = item,
+        frameCount = frameCount,
+        thumbnailProvider = thumbnailProvider,
+    )
+
+    val borderColor by animateColorAsState(
+        targetValue = if (selected) EditorColors.Accent else Color.Transparent,
+        animationSpec = tween(200),
+        label = "clipBorder",
+    )
 
     Box(
         modifier = modifier
-            .width(112.dp)
-            .height(112.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(colors.surfaceFocused),
-        contentAlignment = Alignment.Center,
+            .width(width.dp)
+            .height(56.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .border(
+                width = if (selected) 2.dp else 0.dp,
+                color = borderColor,
+                shape = RoundedCornerShape(10.dp),
+            )
+            .clickable(onClick = onClick),
     ) {
-        if (thumbnail != null) {
-            androidx.compose.foundation.Image(
-                bitmap = thumbnail!!.asImageBitmap(),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-            )
+        if (frameStrip.isNotEmpty()) {
+            if (item.isVideo && frameStrip.size > 1) {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    frameStrip.forEachIndexed { index, bitmap ->
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .padding(end = if (index < frameStrip.lastIndex) 0.5.dp else 0.dp),
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
+                }
+            } else {
+                Image(
+                    bitmap = frameStrip.first().asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            }
         } else {
-            Icon(
-                imageVector = if (isVideo) {
-                    Icons.Outlined.Movie
-                } else {
-                    Icons.Outlined.Image
-                },
-                contentDescription = null,
-                modifier = Modifier.size(28.dp),
-                tint = colors.textMuted,
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(EditorColors.Surface),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (item.isVideo) Icons.Outlined.VideoLibrary
+                    else Icons.Outlined.MovieCreation,
+                    contentDescription = null,
+                    tint = EditorColors.TextMuted,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
 
         Box(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(8.dp)
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f)),
+                    )
+                )
+                .padding(horizontal = 6.dp, vertical = 3.dp),
         ) {
-            MinimalEditorChip(
-                text = if (isVideo) "Video" else "Photo",
-                textColor = if (isVideo) Color(0xFF6FD3FF) else Color(0xFF69E3A7),
-                containerColor = if (isVideo) Color(0xFF112533) else Color(0xFF173126),
-                borderColor = if (isVideo) Color(0xFF6FD3FF).copy(alpha = 0.18f) else Color(0xFF69E3A7).copy(alpha = 0.18f)
+            Text(
+                text = item.durationLabel ?: if (item.isVideo) "Video" else "Photo",
+                color = Color.White.copy(alpha = 0.9f),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+        }
+
+        if (selected) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(EditorColors.Accent),
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(EditorColors.Accent),
             )
         }
     }
 }
 
 @Composable
-private fun HeroChip(text: String) {
-    val colors = SparkCutTheme.colors
-
-    MinimalEditorChip(
-        text = text,
-        textColor = colors.textSecondary,
-        containerColor = colors.surface.copy(alpha = 0.80f),
-        borderColor = colors.strokeSoft.copy(alpha = 0.80f)
-    )
-}
-
-@Composable
-private fun StatChip(text: String) {
-    val colors = SparkCutTheme.colors
-
-    MinimalEditorChip(
-        text = text,
-        textColor = colors.textPrimary,
-        containerColor = colors.surfaceElevated.copy(alpha = 0.95f),
-        borderColor = colors.strokeStrong.copy(alpha = 0.65f)
-    )
-}
-
-@Composable
-private fun MinimalEditorChip(
-    text: String,
-    textColor: Color,
-    containerColor: Color,
-    borderColor: Color,
+private fun EmptyEditorState(
+    title: String,
+    body: String,
 ) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = containerColor,
-        border = BorderStroke(
-            width = 1.dp,
-            color = borderColor
-        )
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(EditorColors.Surface)
+                .border(1.dp, EditorColors.Border, RoundedCornerShape(18.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.MovieCreation,
+                contentDescription = null,
+                tint = EditorColors.Accent,
+                modifier = Modifier.size(24.dp),
+            )
+        }
         Text(
-            text = text,
-            modifier = Modifier.padding(
-                horizontal = 12.dp,
-                vertical = 8.dp
-            ),
-            style = SparkCutTheme.typography.label,
-            color = textColor
+            text = title,
+            color = EditorColors.TextPrimary,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = body,
+            color = EditorColors.TextSecondary,
+            fontSize = 13.sp,
+            lineHeight = 18.sp,
+            textAlign = TextAlign.Center,
         )
     }
 }
 
-private fun editorBottomBarStatusText(state: EditorContract.State): String {
-    return when {
-        state.isResolvingMedia -> "Processing"
-        state.validationErrors.isNotEmpty() -> "Blocked"
-        state.canExport -> "Ready"
-        else -> "Needs review"
+@Composable
+private fun EmptyPreviewPlaceholder(
+    isVideo: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier.background(
+            Brush.verticalGradient(
+                colors = listOf(Color(0xFF171B24), Color(0xFF10131A)),
+            )
+        ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (isVideo) Icons.Outlined.VideoLibrary
+            else Icons.Outlined.MovieCreation,
+            contentDescription = null,
+            tint = EditorColors.TextMuted,
+            modifier = Modifier.size(42.dp),
+        )
     }
 }
 
-private fun editorAutosaveChipText(
-    autosaveState: EditorContract.AutosaveState,
-): String {
-    return when (autosaveState.status) {
-        EditorContract.AutosaveState.Status.Idle -> "Auto-save"
-        EditorContract.AutosaveState.Status.Saving -> "Saving"
-        EditorContract.AutosaveState.Status.Saved -> "Saved"
-        EditorContract.AutosaveState.Status.Error -> "Save error"
+@Composable
+private fun rememberThumbnailBitmap(
+    uri: String,
+    sizePx: Int,
+    thumbnailProvider: MediaThumbnailProvider,
+): State<Bitmap?> {
+    return produceState<Bitmap?>(initialValue = null, key1 = uri, key2 = sizePx) {
+        value = withContext(Dispatchers.IO) {
+            thumbnailProvider.loadThumbnail(uri = uri, sizePx = sizePx)
+        }
     }
 }
 
-private fun editorAutosaveSecondaryText(
-    autosaveState: EditorContract.AutosaveState,
-): String {
-    return autosaveState.message ?: when (autosaveState.status) {
-        EditorContract.AutosaveState.Status.Idle -> "Auto-save is enabled"
-        EditorContract.AutosaveState.Status.Saving -> "Saving changes..."
-        EditorContract.AutosaveState.Status.Saved -> "All changes saved"
-        EditorContract.AutosaveState.Status.Error -> "Project changes could not be saved."
+@Composable
+private fun rememberTimelineStripBitmaps(
+    context: Context,
+    item: EditorContract.SelectedMediaItem,
+    frameCount: Int,
+    thumbnailProvider: MediaThumbnailProvider,
+): State<List<Bitmap>> {
+    val requestKey = remember(item.uri, item.trimStartMs, item.trimEndMs, frameCount) {
+        "${item.uri}|${item.trimStartMs}|${item.trimEndMs}|$frameCount"
+    }
+
+    return produceState(initialValue = emptyList<Bitmap>(), key1 = requestKey) {
+        value = withContext(Dispatchers.IO) {
+            loadTimelineStripBitmaps(context, item, frameCount, thumbnailProvider)
+        }
     }
 }
 
-private fun editorBottomBarSummaryText(state: EditorContract.State): String {
-    return when {
-        state.isResolvingMedia -> {
-            "SparkCut is resolving media and preparing the project."
-        }
+private fun loadTimelineStripBitmaps(
+    context: Context,
+    item: EditorContract.SelectedMediaItem,
+    frameCount: Int,
+    thumbnailProvider: MediaThumbnailProvider,
+): List<Bitmap> {
+    val safeFrameCount = frameCount.coerceIn(1, 6)
+    val thumbSize = 220
 
-        state.validationErrors.isNotEmpty() -> {
-            state.validationErrors.first()
-        }
-
-        state.hasMissingRequiredFields -> {
-            "Complete required text fields before continuing."
-        }
-
-        state.validationWarnings.isNotEmpty() -> {
-            state.validationWarnings.first()
-        }
-
-        state.canExport -> {
-            "Project looks clean. Move forward when you are ready."
-        }
-
-        else -> {
-            "Review the current setup before export."
-        }
+    if (!item.isVideo) {
+        return listOfNotNull(
+            thumbnailProvider.loadThumbnail(uri = item.uri, sizePx = thumbSize)
+        )
     }
+
+    val parsedUri = runCatching { item.uri.toUri() }.getOrNull() ?: return emptyList()
+    val trimStart = item.trimStartMs ?: 0L
+    val trimEnd = item.trimEndMs ?: (item.sourceDurationMs ?: item.effectiveDurationMs)
+    val effectiveDuration = (trimEnd - trimStart).coerceAtLeast(600L)
+
+    val retriever = MediaMetadataRetriever()
+
+    return try {
+        retriever.setDataSource(context, parsedUri)
+
+        buildList {
+            repeat(safeFrameCount) { index ->
+                val fraction = if (safeFrameCount == 1) 0.5f
+                else index.toFloat() / (safeFrameCount - 1).toFloat()
+
+                val timeMs = trimStart + (effectiveDuration * fraction).toLong()
+                val timeUs = timeMs * 1_000L
+
+                val bitmap = retriever.getScaledFrameAtTime(
+                    timeUs,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                    thumbSize,
+                    thumbSize,
+                )
+                if (bitmap != null) add(bitmap)
+            }
+        }.ifEmpty {
+            listOfNotNull(
+                thumbnailProvider.loadThumbnail(uri = item.uri, sizePx = thumbSize)
+            )
+        }
+    } catch (_: Throwable) {
+        listOfNotNull(
+            thumbnailProvider.loadThumbnail(uri = item.uri, sizePx = thumbSize)
+        )
+    } finally {
+        runCatching { retriever.release() }
+    }
+}
+
+private fun computePlayheadOffset(
+    items: List<EditorContract.SelectedMediaItem>,
+    positionMs: Long,
+    clipWidths: List<Float>,
+): Float {
+    if (items.isEmpty() || clipWidths.isEmpty()) return 0f
+    val totalDuration = items.fold(0L) { acc, item -> acc + item.effectiveDurationMs }
+    if (totalDuration <= 0L) return 0f
+
+    var cursor = 0L
+    var pixelCursor = 0f
+    val spacing = 6f
+
+    items.forEachIndexed { index, item ->
+        val clipDuration = item.effectiveDurationMs
+        val clipWidth = clipWidths.getOrElse(index) { 100f }
+
+        if (positionMs < cursor + clipDuration) {
+            val localProgress = (positionMs - cursor).toFloat() / clipDuration.toFloat()
+            return pixelCursor + (clipWidth * localProgress.coerceIn(0f, 1f))
+        }
+
+        cursor += clipDuration
+        pixelCursor += clipWidth + spacing
+    }
+
+    return pixelCursor - spacing
+}
+
+private fun selectedMediaIndexForPosition(
+    items: List<EditorContract.SelectedMediaItem>,
+    positionMs: Long,
+): Int {
+    if (items.isEmpty()) return 0
+    var cursor = 0L
+    items.forEachIndexed { index, item ->
+        val end = cursor + item.effectiveDurationMs
+        if (positionMs < end) return index
+        cursor = end
+    }
+    return items.lastIndex
+}
+
+private fun clipStartPositionMs(
+    items: List<EditorContract.SelectedMediaItem>,
+    index: Int,
+): Long {
+    if (index <= 0) return 0L
+    return items.take(index).sumOf { it.effectiveDurationMs }
+}
+
+private fun timelineTime(millis: Long): String {
+    val totalSeconds = (millis / 1000L).coerceAtLeast(0L)
+    val minutes = totalSeconds / 60L
+    val seconds = totalSeconds % 60L
+    return "%02d:%02d".format(minutes, seconds)
+}
+
+private object EditorColors {
+    val ScreenBackground = Color(0xFF0E1117)
+    val Surface = Color(0xFF161B22)
+    val TimelineSurface = Color(0xFF0D1117)
+    val Border = Color(0xFF21262D)
+
+    val Accent = Color(0xFF00D4AA)
+    val AccentAlt = Color(0xFF7F73FF)
+
+    val TextPrimary = Color(0xFFF0F6FC)
+    val TextSecondary = Color(0xFF8B949E)
+    val TextMuted = Color(0xFF484F58)
+
+    val Success = Color(0xFF3FB950)
+    val Warning = Color(0xFFD29922)
+    val Error = Color(0xFFF85149)
 }

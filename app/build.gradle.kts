@@ -79,6 +79,7 @@ dependencies {
     implementation(project(":feature:editor"))
     implementation(project(":feature:projects"))
     implementation(project(":feature:export"))
+    implementation(project(":feature:settings"))
 
     implementation(libs.androidx.core.ktx)
 

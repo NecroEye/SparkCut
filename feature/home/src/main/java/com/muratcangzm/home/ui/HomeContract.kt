@@ -1,8 +1,6 @@
 package com.muratcangzm.home.ui
 
 import androidx.compose.runtime.Immutable
-import com.muratcangzm.model.id.TemplateId
-import com.muratcangzm.model.template.TemplateCategory
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -10,35 +8,27 @@ interface HomeContract {
 
     @Immutable
     data class State(
-        val isLoading: Boolean = true,
-        val featuredTemplates: List<FeaturedTemplateItem> = emptyList(),
-        val categories: List<CategoryItem> = emptyList(),
+        val isLoading: Boolean = false,
+        val recentProjects: List<RecentProjectItem> = emptyList(),
     )
 
     @Immutable
-    data class FeaturedTemplateItem(
-        val id: TemplateId,
+    data class RecentProjectItem(
+        val projectId: String,
         val name: String,
-        val subtitle: String,
-        val categoryLabel: String,
-    )
-
-    @Immutable
-    data class CategoryItem(
-        val category: TemplateCategory,
-        val label: String,
+        val thumbnailUri: String?,
+        val lastEditedLabel: String,
+        val mediaCount: Int,
     )
 
     sealed interface Event {
-        data object BrowseAllTemplatesClicked : Event
-        data class FeaturedTemplateClicked(val templateId: TemplateId) : Event
-        data class CategoryClicked(val category: TemplateCategory) : Event
+        data object NewProjectClicked : Event
+        data class OpenProjectClicked(val projectId: String) : Event
     }
 
     sealed interface Effect {
-        data object NavigateToTemplateBrowser : Effect
-        data class NavigateToCreate(val templateId: TemplateId) : Effect
-        data class NavigateToCategory(val category: TemplateCategory) : Effect
+        data class NavigateToEditor(val mediaUris: List<String>) : Effect
+        data class NavigateToExistingProject(val projectId: String) : Effect
     }
 
     interface Presenter {

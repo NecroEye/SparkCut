@@ -10,16 +10,10 @@ data object HomeRoute : NavKey
 data object ProjectsRoute : NavKey
 
 @Serializable
-data object TemplatesRoute : NavKey
-
-@Serializable
-data class CreateRoute(
-    val templateId: String,
-) : NavKey
+data object SettingsRoute : NavKey
 
 @Serializable
 data class EditorRoute(
-    val templateId: String? = null,
     val mediaUris: List<String> = emptyList(),
     val projectId: String? = null,
 ) : NavKey

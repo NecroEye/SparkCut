@@ -41,22 +41,16 @@ class AppNavigator(
         navigate(ProjectsRoute)
     }
 
-    fun goToTemplates() {
-        navigate(TemplatesRoute)
-    }
-
-    fun goToCreate(templateId: String) {
-        navigate(CreateRoute(templateId = templateId))
+    fun goToSettings() {
+        navigate(SettingsRoute)
     }
 
     fun goToEditor(
-        templateId: String?,
         mediaUris: List<String>,
-        projectId: String?,
+        projectId: String? = null,
     ) {
         navigate(
             EditorRoute(
-                templateId = templateId,
                 mediaUris = mediaUris,
                 projectId = projectId,
             )

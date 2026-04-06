@@ -9,6 +9,7 @@ import com.muratcangzm.export.di.exportModule
 import com.muratcangzm.home.di.homeModule
 import com.muratcangzm.media.di.mediaCoreModule
 import com.muratcangzm.projects.di.projectModule
+import com.muratcangzm.settings.di.settingsModule
 import com.muratcangzm.template.di.featureTemplateModule
 import com.muratcangzm.templateengine.di.templateCoreModule
 import org.koin.android.ext.koin.androidContext
@@ -33,6 +34,7 @@ class App : Application() {
                 dataModule,
                 databaseModule,
                 projectModule,
+                settingsModule,
             )
         }
     }
