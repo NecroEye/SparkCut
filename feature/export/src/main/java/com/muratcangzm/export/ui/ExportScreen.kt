@@ -15,43 +15,30 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Audiotrack
-import androidx.compose.material.icons.outlined.Clear
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.MovieCreation
-import androidx.compose.material.icons.outlined.Pause
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.SaveAlt
 import androidx.compose.material.icons.outlined.SettingsSuggest
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Subtitles
-import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
 import com.muratcangzm.designsystem.banner.SparkCutValidationBanner
 import com.muratcangzm.designsystem.banner.SparkCutValidationBannerSeverity
 import com.muratcangzm.designsystem.button.SparkCutButtonSize
@@ -99,32 +86,6 @@ fun ExportScreen(
         }
     }
 
-    val previewPlayer = remember {
-        ExoPlayer.Builder(context).build().apply {
-            repeatMode = Player.REPEAT_MODE_ONE
-        }
-    }
-
-    var isMusicPreviewPlaying by remember { mutableStateOf(false) }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            previewPlayer.release()
-        }
-    }
-
-    LaunchedEffect(state.backgroundMusicUri, state.soundtrackErrorMessage) {
-        previewPlayer.stop()
-        previewPlayer.clearMediaItems()
-        isMusicPreviewPlaying = false
-
-        val musicUri = state.backgroundMusicUri
-        if (!musicUri.isNullOrBlank() && state.soundtrackErrorMessage == null) {
-            previewPlayer.setMediaItem(MediaItem.fromUri(musicUri))
-            previewPlayer.prepare()
-        }
-    }
-
     LaunchedEffect(viewModel.effects) {
         viewModel.effects.collect { effect ->
             when (effect) {
@@ -156,23 +117,6 @@ fun ExportScreen(
         state = state,
         snackbarHostState = snackbarHostState,
         onEvent = viewModel::onEvent,
-        onToggleMusicPreview = {
-            val canPreview = state.hasBackgroundMusic &&
-                    state.soundtrackErrorMessage == null &&
-                    !state.isLoadingSoundtrackMetadata
-
-            if (!canPreview) return@ExportScreenContent
-
-            if (previewPlayer.isPlaying) {
-                previewPlayer.pause()
-                isMusicPreviewPlaying = false
-            } else {
-                previewPlayer.playWhenReady = true
-                previewPlayer.play()
-                isMusicPreviewPlaying = true
-            }
-        },
-        isMusicPreviewPlaying = isMusicPreviewPlaying,
     )
 }
 
@@ -181,8 +125,6 @@ private fun ExportScreenContent(
     state: ExportContract.State,
     snackbarHostState: SnackbarHostState,
     onEvent: (ExportContract.Event) -> Unit,
-    onToggleMusicPreview: () -> Unit,
-    isMusicPreviewPlaying: Boolean,
 ) {
     val spacing = SparkCutTheme.spacing
     val colors = SparkCutTheme.colors
@@ -337,176 +279,6 @@ private fun ExportScreenContent(
                                         }
                                     )
                                 }
-                            }
-                        }
-                    }
-
-                    item {
-                        ExportSectionCard(
-                            title = "Soundtrack",
-                            subtitle = "Attach an optional background music track and preview it.",
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Outlined.Audiotrack,
-                                    contentDescription = null,
-                                    tint = colors.textPrimary
-                                )
-                            }
-                        ) {
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(spacing.sm)
-                            ) {
-                                SparkCutStatusChip(
-                                    text = soundtrackStatusText(state),
-                                    tone = soundtrackStatusTone(state)
-                                )
-
-                                Text(
-                                    text = when {
-                                        state.isLoadingSoundtrackMetadata -> "Reading soundtrack metadata..."
-                                        state.soundtrackErrorMessage != null -> state.soundtrackErrorMessage
-                                        state.soundtrackDisplayName != null -> state.soundtrackDisplayName
-                                        else -> "No soundtrack selected"
-                                    },
-                                    style = SparkCutTheme.typography.body,
-                                    color = if (state.soundtrackErrorMessage != null) {
-                                        colors.error
-                                    } else {
-                                        colors.textSecondary
-                                    }
-                                )
-
-                                if (!state.soundtrackDurationLabel.isNullOrBlank() || !state.soundtrackMimeType.isNullOrBlank()) {
-                                    Column(
-                                        verticalArrangement = Arrangement.spacedBy(spacing.xxs)
-                                    ) {
-                                        state.soundtrackDurationLabel?.let { duration ->
-                                            Text(
-                                                text = "Duration: $duration",
-                                                style = SparkCutTheme.typography.meta,
-                                                color = colors.textMuted
-                                            )
-                                        }
-
-                                        state.soundtrackMimeType?.let { mime ->
-                                            Text(
-                                                text = mime,
-                                                style = SparkCutTheme.typography.meta,
-                                                color = colors.textMuted
-                                            )
-                                        }
-                                    }
-                                }
-
-                                SparkCutSecondaryButton(
-                                    text = if (state.hasBackgroundMusic) {
-                                        "Replace soundtrack"
-                                    } else {
-                                        "Pick soundtrack"
-                                    },
-                                    onClick = { onEvent(ExportContract.Event.PickMusicClicked) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    leadingContent = {
-                                        Icon(
-                                            imageVector = Icons.Outlined.Audiotrack,
-                                            contentDescription = null
-                                        )
-                                    }
-                                )
-
-                                SparkCutSecondaryButton(
-                                    text = if (isMusicPreviewPlaying) {
-                                        "Pause preview"
-                                    } else {
-                                        "Play preview"
-                                    },
-                                    onClick = onToggleMusicPreview,
-                                    enabled = state.hasBackgroundMusic &&
-                                            state.soundtrackErrorMessage == null &&
-                                            !state.isLoadingSoundtrackMetadata,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    leadingContent = {
-                                        Icon(
-                                            imageVector = if (isMusicPreviewPlaying) {
-                                                Icons.Outlined.Pause
-                                            } else {
-                                                Icons.Outlined.PlayArrow
-                                            },
-                                            contentDescription = null
-                                        )
-                                    }
-                                )
-
-                                SparkCutSecondaryButton(
-                                    text = "Clear soundtrack",
-                                    onClick = { onEvent(ExportContract.Event.ClearMusicClicked) },
-                                    enabled = state.hasBackgroundMusic,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    leadingContent = {
-                                        Icon(
-                                            imageVector = Icons.Outlined.Clear,
-                                            contentDescription = null
-                                        )
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    item {
-                        ExportSectionCard(
-                            title = "Audio mix",
-                            subtitle = "Blend source audio and soundtrack levels.",
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Outlined.VolumeUp,
-                                    contentDescription = null,
-                                    tint = colors.textPrimary
-                                )
-                            }
-                        ) {
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(spacing.sm)
-                            ) {
-                                ExportSliderBlock(
-                                    title = "Clip audio",
-                                    valueLabel = "${(state.clipAudioVolume * 100).toInt()}%",
-                                    value = state.clipAudioVolume,
-                                    onValueChange = {
-                                        onEvent(ExportContract.Event.ClipAudioVolumeChanged(it))
-                                    },
-                                    valueRange = 0f..1f
-                                )
-
-                                ExportSliderBlock(
-                                    title = "Music audio",
-                                    valueLabel = "${(state.musicAudioVolume * 100).toInt()}%",
-                                    value = state.musicAudioVolume,
-                                    onValueChange = {
-                                        onEvent(ExportContract.Event.MusicAudioVolumeChanged(it))
-                                    },
-                                    valueRange = 0f..1f
-                                )
-
-                                ExportSliderBlock(
-                                    title = "Fade in",
-                                    valueLabel = "${state.fadeInMs} ms",
-                                    value = state.fadeInMs.toFloat(),
-                                    onValueChange = {
-                                        onEvent(ExportContract.Event.FadeInChanged(it.toLong()))
-                                    },
-                                    valueRange = 0f..3000f
-                                )
-
-                                ExportSliderBlock(
-                                    title = "Fade out",
-                                    valueLabel = "${state.fadeOutMs} ms",
-                                    value = state.fadeOutMs.toFloat(),
-                                    onValueChange = {
-                                        onEvent(ExportContract.Event.FadeOutChanged(it.toLong()))
-                                    },
-                                    valueRange = 0f..3000f
-                                )
                             }
                         }
                     }
@@ -875,44 +647,6 @@ private fun ExportPresetCard(
     }
 }
 
-@Composable
-private fun ExportSliderBlock(
-    title: String,
-    valueLabel: String,
-    value: Float,
-    onValueChange: (Float) -> Unit,
-    valueRange: ClosedFloatingPointRange<Float>,
-) {
-    val spacing = SparkCutTheme.spacing
-    val typography = SparkCutTheme.typography
-    val colors = SparkCutTheme.colors
-
-    Column(
-        verticalArrangement = Arrangement.spacedBy(spacing.xs)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = title,
-                style = typography.cardTitle,
-                color = colors.textPrimary
-            )
-            Spacer(modifier = Modifier.weight(1f))
-            Text(
-                text = valueLabel,
-                style = typography.meta,
-                color = colors.textMuted
-            )
-        }
-
-        Slider(
-            value = value,
-            onValueChange = onValueChange,
-            valueRange = valueRange
-        )
-    }
-}
 
 @Composable
 private fun ExportMetaRow(
@@ -939,23 +673,6 @@ private fun ExportMetaRow(
     }
 }
 
-private fun soundtrackStatusText(state: ExportContract.State): String {
-    return when {
-        state.isLoadingSoundtrackMetadata -> "Reading"
-        state.soundtrackErrorMessage != null -> "Invalid"
-        state.hasBackgroundMusic -> "Attached"
-        else -> "Optional"
-    }
-}
-
-private fun soundtrackStatusTone(state: ExportContract.State): SparkCutStatusTone {
-    return when {
-        state.isLoadingSoundtrackMetadata -> SparkCutStatusTone.Info
-        state.soundtrackErrorMessage != null -> SparkCutStatusTone.Error
-        state.hasBackgroundMusic -> SparkCutStatusTone.Success
-        else -> SparkCutStatusTone.Neutral
-    }
-}
 
 private fun exportOutputBannerTitle(state: ExportContract.State): String {
     return when {

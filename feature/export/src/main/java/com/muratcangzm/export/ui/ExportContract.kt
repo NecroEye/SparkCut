@@ -17,6 +17,35 @@ interface ExportContract {
     )
 
     @Immutable
+    data class AudioTrackArg(
+        val uri: String,
+        val fileName: String,
+        val durationMs: Long,
+        val trimStartMs: Long,
+        val trimEndMs: Long?,
+        val volume: Float,
+        val offsetMs: Long,
+    )
+
+    @Immutable
+    data class CaptionArg(
+        val id: String,
+        val text: String,
+        val startMs: Long,
+        val endMs: Long,
+    )
+
+    @Immutable
+    data class TextOverlayArg(
+        val id: String,
+        val text: String,
+        val startMs: Long,
+        val endMs: Long,
+        val gravity: String,
+        val textSizeSp: Float,
+    )
+
+    @Immutable
     data class LaunchArgs(
         val projectId: String? = null,
         val templateId: String,
@@ -25,6 +54,12 @@ interface ExportContract {
         val transitionPresetName: String,
         val aspectRatioLabel: String,
         val backgroundMusicUri: String? = null,
+        val isMuted: Boolean = false,
+        val audioTracks: List<AudioTrackArg> = emptyList(),
+        val resolutionWidth: Int = 1080,
+        val resolutionHeight: Int = 1920,
+        val captions: List<CaptionArg> = emptyList(),
+        val textOverlays: List<TextOverlayArg> = emptyList(),
     )
 
     @Immutable

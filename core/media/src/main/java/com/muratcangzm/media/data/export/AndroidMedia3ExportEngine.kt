@@ -13,6 +13,7 @@ import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.DefaultGainProvider
 import androidx.media3.common.audio.GainProcessor
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
@@ -238,6 +239,18 @@ private class AndroidMedia3ExportSession(
                 Media3OverlayEffectFactory
                     .createTextOverlayEffect(segment.activeOverlays)
                     ?.let(::add)
+
+                val outW = request.outputWidth
+                val outH = request.outputHeight
+                if (outW != null && outH != null && outW > 0 && outH > 0) {
+                    add(
+                        Presentation.createForWidthAndHeight(
+                            outW,
+                            outH,
+                            Presentation.LAYOUT_SCALE_TO_FIT,
+                        )
+                    )
+                }
             }
 
             val clipAudioProcessors = if (segment.mediaType == MediaType.VIDEO) {

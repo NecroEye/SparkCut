@@ -87,6 +87,38 @@ fun SparkCutNavHost(
                                 transitionPresetName = payload.transition.name,
                                 aspectRatioLabel = payload.aspectRatioLabel,
                                 backgroundMusicUri = payload.backgroundMusicUri,
+                                isMuted = payload.isMuted,
+                                audioTracks = payload.audioTracks.map { track ->
+                                    ExportAudioTrackNavArg(
+                                        uri = track.uri,
+                                        fileName = track.fileName,
+                                        durationMs = track.durationMs,
+                                        trimStartMs = track.trimStartMs,
+                                        trimEndMs = track.trimEndMs,
+                                        volume = track.volume,
+                                        offsetMs = track.offsetMs,
+                                    )
+                                },
+                                resolutionWidth = payload.resolutionWidth,
+                                resolutionHeight = payload.resolutionHeight,
+                                captions = payload.captions.map { caption ->
+                                    ExportCaptionNavArg(
+                                        id = caption.id,
+                                        text = caption.text,
+                                        startMs = caption.startMs,
+                                        endMs = caption.endMs,
+                                    )
+                                },
+                                textOverlays = payload.textOverlays.map { overlay ->
+                                    ExportTextOverlayNavArg(
+                                        id = overlay.id,
+                                        text = overlay.text,
+                                        startMs = overlay.startMs,
+                                        endMs = overlay.endMs,
+                                        gravity = overlay.gravity,
+                                        textSizeSp = overlay.textSizeSp,
+                                    )
+                                },
                             )
                         )
                     },
@@ -114,6 +146,38 @@ fun SparkCutNavHost(
                         transitionPresetName = key.transitionPresetName,
                         aspectRatioLabel = key.aspectRatioLabel,
                         backgroundMusicUri = key.backgroundMusicUri,
+                        isMuted = key.isMuted,
+                        audioTracks = key.audioTracks.map { track ->
+                            ExportContract.AudioTrackArg(
+                                uri = track.uri,
+                                fileName = track.fileName,
+                                durationMs = track.durationMs,
+                                trimStartMs = track.trimStartMs,
+                                trimEndMs = track.trimEndMs,
+                                volume = track.volume,
+                                offsetMs = track.offsetMs,
+                            )
+                        },
+                        resolutionWidth = key.resolutionWidth,
+                        resolutionHeight = key.resolutionHeight,
+                        captions = key.captions.map { caption ->
+                            ExportContract.CaptionArg(
+                                id = caption.id,
+                                text = caption.text,
+                                startMs = caption.startMs,
+                                endMs = caption.endMs,
+                            )
+                        },
+                        textOverlays = key.textOverlays.map { overlay ->
+                            ExportContract.TextOverlayArg(
+                                id = overlay.id,
+                                text = overlay.text,
+                                startMs = overlay.startMs,
+                                endMs = overlay.endMs,
+                                gravity = overlay.gravity,
+                                textSizeSp = overlay.textSizeSp,
+                            )
+                        },
                     ),
                     onBack = {
                         navigator.pop()

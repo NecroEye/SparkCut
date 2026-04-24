@@ -17,7 +17,13 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +35,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -41,6 +48,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.VolumeOff
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FastForward
 import androidx.compose.material.icons.outlined.FastRewind
@@ -51,6 +59,8 @@ import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material.icons.outlined.VideoLibrary
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -67,17 +77,27 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -300,13 +320,25 @@ private fun EditorScreenContent(
                 }
 
                 else -> {
+                    if (state.showRenameDialog) {
+                        RenameProjectDialog(
+                            currentName = state.projectName,
+                            onConfirm = { onEvent(EditorContract.Event.ProjectNameChanged(it)) },
+                            onDismiss = { onEvent(EditorContract.Event.DismissRenameDialog) },
+                        )
+                    }
+
                     Column(modifier = Modifier.fillMaxSize()) {
                         EditorTopBar(
                             state = state,
                             onClose = { onEvent(EditorContract.Event.BackClicked) },
                             onExport = { onEvent(EditorContract.Event.ExportClicked) },
+                            onProjectNameClicked = { onEvent(EditorContract.Event.ProjectNameClicked) },
                             onAspectRatioSelected = { ratio ->
                                 onEvent(EditorContract.Event.AspectRatioSelected(ratio))
+                            },
+                            onResolutionSelected = { resolution ->
+                                onEvent(EditorContract.Event.ResolutionSelected(resolution))
                             },
                         )
 
@@ -321,6 +353,15 @@ private fun EditorScreenContent(
                                 exoPlayer = exoPlayer,
                                 thumbnailProvider = thumbnailProvider,
                                 onTogglePlay = { onEvent(EditorContract.Event.TogglePlayPause) },
+                                onTextOverlayPositionChanged = { id, x, y ->
+                                    onEvent(EditorContract.Event.TextOverlayPositionChanged(id, x, y))
+                                },
+                                onTextOverlayRotationChanged = { id, rotation ->
+                                    onEvent(EditorContract.Event.TextOverlayRotationChanged(id, rotation))
+                                },
+                                onTextOverlayDoubleTap = { id ->
+                                    onEvent(EditorContract.Event.ShowDurationPicker(id))
+                                },
                             )
                         }
 
@@ -348,8 +389,54 @@ private fun EditorScreenContent(
                             onMuteToggle = { onEvent(EditorContract.Event.ToggleMute) },
                             onAddMedia = { onEvent(EditorContract.Event.AddMediaClicked) },
                             onAddAudio = { onEvent(EditorContract.Event.AddAudioClicked) },
-                            onRemoveAudio = { onEvent(EditorContract.Event.RemoveAudioTrack) },
+                            onRemoveAudio = { id -> onEvent(EditorContract.Event.RemoveAudioTrack(id)) },
+                            onOpenMediaTrim = { uri -> onEvent(EditorContract.Event.OpenMediaTrimmer(uri)) },
+                            onOpenAudioTrim = { id -> onEvent(EditorContract.Event.OpenAudioTrimmer(id)) },
+                            onAudioOffsetChanged = { id, offset ->
+                                onEvent(EditorContract.Event.AudioOffsetChanged(id, offset))
+                            },
+                            onEditTextOverlay = { id ->
+                                onEvent(EditorContract.Event.EditTextOverlay(id))
+                            },
+                            onDeleteTextOverlay = { id ->
+                                onEvent(EditorContract.Event.DeleteTextOverlay(id))
+                            },
+                            onSeekToPosition = { posMs ->
+                                onEvent(EditorContract.Event.SeekTo(posMs))
+                            },
                         )
+
+                        val trimmingMedia = state.trimmingMediaUri?.let { uri ->
+                            state.selectedMedia.find { it.uri == uri }
+                        }
+                        if (trimmingMedia != null && trimmingMedia.canTrim) {
+                            TrimBar(
+                                label = trimmingMedia.fileName,
+                                durationMs = trimmingMedia.sourceDurationMs ?: trimmingMedia.effectiveDurationMs,
+                                startMs = trimmingMedia.trimStartMs ?: 0L,
+                                endMs = trimmingMedia.trimEndMs ?: trimmingMedia.sourceDurationMs ?: trimmingMedia.effectiveDurationMs,
+                                onTrimChanged = { start, end ->
+                                    onEvent(EditorContract.Event.TrimChanged(trimmingMedia.uri, start, end))
+                                },
+                                onDismiss = { onEvent(EditorContract.Event.DismissTrimmer) },
+                            )
+                        }
+
+                        val trimmingAudio = state.trimmingAudioId?.let { id ->
+                            state.audioTracks.find { it.id == id }
+                        }
+                        if (trimmingAudio != null) {
+                            TrimBar(
+                                label = trimmingAudio.fileName,
+                                durationMs = trimmingAudio.durationMs,
+                                startMs = trimmingAudio.trimStartMs,
+                                endMs = trimmingAudio.trimEndMs ?: trimmingAudio.durationMs,
+                                onTrimChanged = { start, end ->
+                                    onEvent(EditorContract.Event.AudioTrimChanged(trimmingAudio.id, start, end))
+                                },
+                                onDismiss = { onEvent(EditorContract.Event.DismissTrimmer) },
+                            )
+                        }
 
                         EditorBottomToolbar(
                             activeTab = state.activeToolbarTab,
@@ -387,6 +474,61 @@ private fun EditorScreenContent(
                             modifier = Modifier.align(Alignment.BottomCenter),
                         )
                     }
+
+                    if (state.showTextOverlayInput) {
+                        val editingOverlay = state.editingTextOverlayId?.let { id ->
+                            state.textOverlays.find { it.id == id }
+                        }
+                        TextOverlayInputDialog(
+                            editingOverlay = editingOverlay,
+                            totalDurationMs = state.totalDurationMs,
+                            onConfirm = { text, gravity, durationMs ->
+                                if (editingOverlay != null) {
+                                    onEvent(
+                                        EditorContract.Event.UpdateTextOverlay(
+                                            overlayId = editingOverlay.id,
+                                            text = text,
+                                            gravity = gravity,
+                                            durationMs = durationMs,
+                                        )
+                                    )
+                                } else {
+                                    onEvent(
+                                        EditorContract.Event.ConfirmTextOverlay(
+                                            text = text,
+                                            gravity = gravity,
+                                            durationMs = durationMs,
+                                        )
+                                    )
+                                }
+                            },
+                            onDismiss = {
+                                onEvent(EditorContract.Event.DismissTextOverlayInput)
+                            },
+                        )
+                    }
+
+                    // Duration picker dialog on double-tap
+                    state.showDurationPickerOverlayId?.let { overlayId ->
+                        val overlay = state.textOverlays.find { it.id == overlayId }
+                        if (overlay != null) {
+                            DurationPickerDialog(
+                                currentDurationMs = overlay.endMs - overlay.startMs,
+                                maxDurationMs = state.totalDurationMs,
+                                onConfirm = { newDurationMs ->
+                                    onEvent(
+                                        EditorContract.Event.TextOverlayDurationChanged(
+                                            overlayId = overlayId,
+                                            durationMs = newDurationMs,
+                                        )
+                                    )
+                                },
+                                onDismiss = {
+                                    onEvent(EditorContract.Event.DismissDurationPicker)
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -398,7 +540,9 @@ private fun EditorTopBar(
     state: EditorContract.State,
     onClose: () -> Unit,
     onExport: () -> Unit,
+    onProjectNameClicked: () -> Unit = {},
     onAspectRatioSelected: (String) -> Unit = {},
+    onResolutionSelected: (EditorResolutionOption) -> Unit = {},
 ) {
     var showResolutionMenu by remember { mutableStateOf(false) }
     var showAspectRatioMenu by remember { mutableStateOf(false) }
@@ -427,10 +571,14 @@ private fun EditorTopBar(
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(6.dp))
+                .clickable(onClick = onProjectNameClicked)
+                .padding(vertical = 4.dp, horizontal = 2.dp),
         )
 
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.width(8.dp))
 
         Box {
             Row(
@@ -484,7 +632,7 @@ private fun EditorTopBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "1080P",
+                    text = state.selectedResolution.label,
                     color = EditorColors.TextPrimary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -500,10 +648,18 @@ private fun EditorTopBar(
                 expanded = showResolutionMenu,
                 onDismissRequest = { showResolutionMenu = false },
             ) {
-                listOf("720P", "1080P", "4K").forEach { res ->
+                state.availableResolutions.forEach { resolution ->
                     DropdownMenuItem(
-                        text = { Text(res) },
-                        onClick = { showResolutionMenu = false },
+                        text = {
+                            Text(
+                                text = resolution.label,
+                                fontWeight = if (resolution == state.selectedResolution) FontWeight.Bold else FontWeight.Normal,
+                            )
+                        },
+                        onClick = {
+                            onResolutionSelected(resolution)
+                            showResolutionMenu = false
+                        },
                     )
                 }
             }
@@ -528,6 +684,9 @@ private fun VideoPreviewArea(
     exoPlayer: ExoPlayer,
     thumbnailProvider: MediaThumbnailProvider,
     onTogglePlay: () -> Unit,
+    onTextOverlayPositionChanged: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onTextOverlayRotationChanged: (String, Float) -> Unit = { _, _ -> },
+    onTextOverlayDoubleTap: (String) -> Unit = {},
 ) {
     Box(
         modifier = Modifier
@@ -542,6 +701,11 @@ private fun VideoPreviewArea(
             }
 
             selectedMedia.isVideo -> {
+                PreviewMediaThumbnail(
+                    item = selectedMedia,
+                    thumbnailProvider = thumbnailProvider,
+                )
+
                 ExoPlayerSurface(
                     exoPlayer = exoPlayer,
                     modifier = Modifier.fillMaxSize(),
@@ -573,6 +737,32 @@ private fun VideoPreviewArea(
                         .align(Alignment.TopCenter)
                         .padding(horizontal = 24.dp, vertical = 20.dp),
                 )
+            }
+        }
+
+        // Show active text overlays at current playback position — draggable
+        var previewSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .onSizeChanged { previewSize = it },
+        ) {
+            state.textOverlays.forEach { overlay ->
+                if (state.playbackPositionMs in overlay.startMs..overlay.endMs) {
+                    DraggableTextOverlay(
+                        overlay = overlay,
+                        previewSize = previewSize,
+                        onPositionChanged = { x, y ->
+                            onTextOverlayPositionChanged(overlay.id, x, y)
+                        },
+                        onRotationChanged = { rotation ->
+                            onTextOverlayRotationChanged(overlay.id, rotation)
+                        },
+                        onDoubleTap = {
+                            onTextOverlayDoubleTap(overlay.id)
+                        },
+                    )
+                }
             }
         }
 
@@ -757,7 +947,13 @@ private fun TimelineSection(
     onMuteToggle: () -> Unit,
     onAddMedia: () -> Unit,
     onAddAudio: () -> Unit,
-    onRemoveAudio: () -> Unit,
+    onRemoveAudio: (String) -> Unit,
+    onOpenMediaTrim: (String) -> Unit,
+    onOpenAudioTrim: (String) -> Unit,
+    onAudioOffsetChanged: (String, Long) -> Unit = { _, _ -> },
+    onEditTextOverlay: (String) -> Unit = {},
+    onDeleteTextOverlay: (String) -> Unit = {},
+    onSeekToPosition: (Long) -> Unit = {},
 ) {
     if (state.selectedMedia.isEmpty()) {
         Box(
@@ -792,16 +988,21 @@ private fun TimelineSection(
         max(400f, widthSum + 40f)
     }
 
-    val playheadOffsetPx = remember(state.playbackPositionMs, clipWidths, state.selectedMedia) {
-        computePlayheadOffset(state.selectedMedia, state.playbackPositionMs, clipWidths)
-    }
+    val density = LocalDensity.current
+    var playheadPx by remember { mutableFloatStateOf(0f) }
 
-    LaunchedEffect(playheadOffsetPx, viewportWidthPx, scrollState.maxValue) {
+    val computedPx = remember(state.playbackPositionMs, clipWidths, state.selectedMedia) {
+        val dpVal = computePlayheadOffset(state.selectedMedia, state.playbackPositionMs, clipWidths)
+        with(density) { dpVal.dp.toPx() }
+    }
+    playheadPx = computedPx
+
+    LaunchedEffect(computedPx, viewportWidthPx, scrollState.maxValue) {
         if (viewportWidthPx <= 0) return@LaunchedEffect
-        val target = (playheadOffsetPx - viewportWidthPx / 2f)
+        val target = (computedPx - viewportWidthPx / 2f)
             .roundToInt()
             .coerceIn(0, scrollState.maxValue)
-        if (abs(scrollState.value - target) > 20) {
+        if (abs(scrollState.value - target) > viewportWidthPx * 0.05f) {
             scrollState.animateScrollTo(target)
         }
     }
@@ -836,14 +1037,35 @@ private fun TimelineSection(
                     .onSizeChanged { viewportWidthPx = it.width }
                     .horizontalScroll(scrollState),
             ) {
-                val timelineHeight = if (state.audioTrack != null) (64 + 4 + 40).dp else 64.dp
+                val textOverlayCount = state.textOverlays.size
+                val audioTrackCount = state.audioTracks.size
+                val timelineHeight = (64 + textOverlayCount * 32 + audioTrackCount * 44).dp
 
                 Box(
                     modifier = Modifier
                         .width(totalTimelineWidth.dp)
-                        .height(timelineHeight),
+                        .height(timelineHeight)
+                        .pointerInput(state.totalDurationMs, totalTimelineWidth) {
+                            detectTapGestures { offset ->
+                                val fraction = (offset.x / (totalTimelineWidth * density.density))
+                                    .coerceIn(0f, 1f)
+                                val seekMs = (fraction * state.totalDurationMs).toLong()
+                                onSeekToPosition(seekMs)
+                            }
+                        },
                 ) {
                     Column {
+                        state.textOverlays.forEach { overlay ->
+                            TextOverlayTrackRow(
+                                overlay = overlay,
+                                totalTimelineWidth = totalTimelineWidth,
+                                totalDurationMs = state.totalDurationMs,
+                                onEdit = { onEditTextOverlay(overlay.id) },
+                                onDelete = { onDeleteTextOverlay(overlay.id) },
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                        }
+
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -858,76 +1080,71 @@ private fun TimelineSection(
                                 thumbnailProvider = thumbnailProvider,
                                 onClipSelected = onClipSelected,
                                 onReorderMedia = onReorderMedia,
+                                onOpenTrim = onOpenMediaTrim,
                             )
                         }
 
-                        if (state.audioTrack != null) {
+                        state.audioTracks.forEach { audioTrack ->
                             Spacer(modifier = Modifier.height(4.dp))
 
                             AudioTrackRow(
-                                audioTrack = state.audioTrack,
+                                audioTrack = audioTrack,
                                 totalTimelineWidth = totalTimelineWidth,
-                                onRemove = onRemoveAudio,
+                                totalDurationMs = state.totalDurationMs,
+                                onRemove = { onRemoveAudio(audioTrack.id) },
+                                onTrim = { onOpenAudioTrim(audioTrack.id) },
+                                onOffsetChanged = { newOffset ->
+                                    onAudioOffsetChanged(audioTrack.id, newOffset)
+                                },
                             )
                         }
                     }
 
                     Box(
                         modifier = Modifier
+                            .offset { IntOffset(playheadPx.roundToInt(), 0) }
                             .width(2.dp)
                             .fillMaxHeight()
-                            .background(EditorColors.Accent)
-                            .graphicsLayer { translationX = playheadOffsetPx },
+                            .background(EditorColors.Accent),
                     )
                 }
             }
 
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(EditorColors.Surface)
-                    .border(1.dp, EditorColors.Border, RoundedCornerShape(10.dp))
-                    .clickable(onClick = onAddMedia),
-                contentAlignment = Alignment.Center,
+            Column(
+                modifier = Modifier.padding(start = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Icon(
-                    imageVector = Icons.Outlined.Add,
-                    contentDescription = "Add clip",
-                    tint = EditorColors.TextSecondary,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
-
-        if (state.audioTrack == null) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
-                    .padding(bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(
+                Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(10.dp))
                         .background(EditorColors.Surface)
-                        .border(1.dp, EditorColors.Border, RoundedCornerShape(8.dp))
-                        .clickable(onClick = onAddAudio)
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        .border(1.dp, EditorColors.Border, RoundedCornerShape(10.dp))
+                        .clickable(onClick = onAddMedia),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Add,
+                        contentDescription = "Add clip",
+                        tint = EditorColors.TextSecondary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(EditorColors.Surface)
+                        .border(1.dp, EditorColors.Border, RoundedCornerShape(10.dp))
+                        .clickable(onClick = onAddAudio),
+                    contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.MusicNote,
-                        contentDescription = null,
-                        tint = EditorColors.TextMuted,
-                        modifier = Modifier.size(12.dp),
-                    )
-                    Text(
-                        text = "Add audio",
-                        color = EditorColors.TextMuted,
-                        fontSize = 11.sp,
+                        contentDescription = "Add audio",
+                        tint = EditorColors.AccentAlt,
+                        modifier = Modifier.size(18.dp),
                     )
                 }
             }
@@ -939,77 +1156,109 @@ private fun TimelineSection(
 private fun AudioTrackRow(
     audioTrack: EditorContract.AudioTrackItem,
     totalTimelineWidth: Float,
+    totalDurationMs: Long,
     onRemove: () -> Unit,
+    onTrim: () -> Unit,
+    onOffsetChanged: (Long) -> Unit,
 ) {
-    val audioWidthFraction = if (audioTrack.durationMs > 0L) {
-        (audioTrack.effectiveDurationMs / 1000f * 60f) / totalTimelineWidth
-    } else 1f
+    val audioWidthDp = (audioTrack.effectiveDurationMs / 1000f * 60f)
+        .coerceIn(60f, totalTimelineWidth)
+
+    val offsetFraction = if (totalDurationMs > 0L) {
+        audioTrack.offsetMs.toFloat() / totalDurationMs
+    } else 0f
+    val offsetDp = totalTimelineWidth * offsetFraction
+
+    var localOffsetDp by remember(offsetDp) { mutableFloatStateOf(offsetDp) }
 
     Box(
         modifier = Modifier
-            .fillMaxWidth(audioWidthFraction.coerceIn(0.1f, 1f))
-            .height(40.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(EditorColors.AccentAlt.copy(alpha = 0.18f))
-            .border(1.dp, EditorColors.AccentAlt.copy(alpha = 0.4f), RoundedCornerShape(8.dp)),
+            .width(totalTimelineWidth.dp)
+            .height(40.dp),
     ) {
-        Row(
+        Box(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(start = localOffsetDp.dp)
+                .width(audioWidthDp.dp)
+                .height(40.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(EditorColors.AccentAlt.copy(alpha = 0.18f))
+                .border(1.dp, EditorColors.AccentAlt.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                .pointerInput(totalTimelineWidth, totalDurationMs) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            if (totalTimelineWidth > 0f && totalDurationMs > 0L) {
+                                val newMs = ((localOffsetDp / totalTimelineWidth) * totalDurationMs).toLong()
+                                onOffsetChanged(newMs.coerceIn(0L, totalDurationMs))
+                            }
+                        },
+                    ) { change, dragAmount ->
+                        change.consume()
+                        val deltaDp = dragAmount / density
+                        localOffsetDp = (localOffsetDp + deltaDp)
+                            .coerceIn(0f, totalTimelineWidth - audioWidthDp)
+                    }
+                }
+                .clickable(onClick = onTrim),
         ) {
-            Icon(
-                imageVector = Icons.Outlined.MusicNote,
-                contentDescription = null,
-                tint = EditorColors.AccentAlt,
-                modifier = Modifier.size(14.dp),
-            )
-
-            Spacer(modifier = Modifier.width(6.dp))
-
-            Text(
-                text = audioTrack.fileName,
-                color = EditorColors.TextPrimary,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-
-            Spacer(modifier = Modifier.width(4.dp))
-
-            Text(
-                text = timelineTime(audioTrack.effectiveDurationMs),
-                color = EditorColors.TextSecondary,
-                fontSize = 9.sp,
-            )
-
-            Spacer(modifier = Modifier.width(4.dp))
-
-            Box(
+            Row(
                 modifier = Modifier
-                    .size(18.dp)
-                    .clip(CircleShape)
-                    .background(EditorColors.Surface)
-                    .clickable(onClick = onRemove),
-                contentAlignment = Alignment.Center,
+                    .fillMaxSize()
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
-                    imageVector = Icons.Outlined.Close,
-                    contentDescription = "Remove audio",
-                    tint = EditorColors.TextMuted,
-                    modifier = Modifier.size(10.dp),
+                    imageVector = Icons.Outlined.MusicNote,
+                    contentDescription = null,
+                    tint = EditorColors.AccentAlt,
+                    modifier = Modifier.size(14.dp),
                 )
-            }
-        }
 
-        AudioWaveformDecoration(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer { alpha = 0.15f },
-        )
+                Spacer(modifier = Modifier.width(6.dp))
+
+                Text(
+                    text = audioTrack.fileName,
+                    color = EditorColors.TextPrimary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+
+                Spacer(modifier = Modifier.width(4.dp))
+
+                Text(
+                    text = timelineTime(audioTrack.effectiveDurationMs),
+                    color = EditorColors.TextSecondary,
+                    fontSize = 9.sp,
+                )
+
+                Spacer(modifier = Modifier.width(4.dp))
+
+                Box(
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .background(EditorColors.Surface)
+                        .clickable(onClick = onRemove),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Close,
+                        contentDescription = "Remove audio",
+                        tint = EditorColors.TextMuted,
+                        modifier = Modifier.size(10.dp),
+                    )
+                }
+            }
+
+            AudioWaveformDecoration(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = 0.15f },
+            )
+        }
     }
 }
 
@@ -1052,6 +1301,7 @@ private fun TimelineMediaRow(
     thumbnailProvider: MediaThumbnailProvider,
     onClipSelected: (Int) -> Unit,
     onReorderMedia: (Int, Int) -> Unit,
+    onOpenTrim: (String) -> Unit,
 ) {
     val density = LocalDensity.current
     val spacingPx = with(density) { 6.dp.toPx() }
@@ -1124,6 +1374,7 @@ private fun TimelineMediaRow(
                     )
                 },
             onClick = { onClipSelected(index) },
+            onDoubleTap = { if (item.canTrim) onOpenTrim(item.uri) },
         )
     }
 }
@@ -1136,10 +1387,11 @@ private fun TimelineClipCell(
     thumbnailProvider: MediaThumbnailProvider,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
+    onDoubleTap: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val frameCount = remember(width) {
-        (width / 50f).roundToInt().coerceIn(2, 6)
+        (width / 60f).roundToInt().coerceIn(2, 20)
     }
 
     val frameStrip by rememberTimelineStripBitmaps(
@@ -1165,19 +1417,23 @@ private fun TimelineClipCell(
                 color = borderColor,
                 shape = RoundedCornerShape(10.dp),
             )
-            .clickable(onClick = onClick),
+            .pointerInput(onClick, onDoubleTap) {
+                detectTapGestures(
+                    onTap = { onClick() },
+                    onDoubleTap = { onDoubleTap() },
+                )
+            },
     ) {
         if (frameStrip.isNotEmpty()) {
             if (item.isVideo && frameStrip.size > 1) {
                 Row(modifier = Modifier.fillMaxSize()) {
-                    frameStrip.forEachIndexed { index, bitmap ->
+                    frameStrip.forEach { bitmap ->
                         Image(
                             bitmap = bitmap.asImageBitmap(),
                             contentDescription = null,
                             modifier = Modifier
                                 .weight(1f)
-                                .fillMaxHeight()
-                                .padding(end = if (index < frameStrip.lastIndex) 0.5.dp else 0.dp),
+                                .fillMaxHeight(),
                             contentScale = ContentScale.Crop,
                         )
                     }
@@ -1347,8 +1603,8 @@ private fun loadTimelineStripBitmaps(
     frameCount: Int,
     thumbnailProvider: MediaThumbnailProvider,
 ): List<Bitmap> {
-    val safeFrameCount = frameCount.coerceIn(1, 6)
-    val thumbSize = 220
+    val safeFrameCount = frameCount.coerceIn(1, 20)
+    val thumbSize = 160
 
     if (!item.isVideo) {
         return listOfNotNull(
@@ -1393,6 +1649,342 @@ private fun loadTimelineStripBitmaps(
         )
     } finally {
         runCatching { retriever.release() }
+    }
+}
+
+@Composable
+private fun TrimBar(
+    label: String,
+    durationMs: Long,
+    startMs: Long,
+    endMs: Long,
+    onTrimChanged: (Long, Long) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var localStart by remember(startMs) { mutableLongStateOf(startMs) }
+    var localEnd by remember(endMs) { mutableLongStateOf(endMs) }
+
+    val startFraction = if (durationMs > 0) localStart.toFloat() / durationMs else 0f
+    val endFraction = if (durationMs > 0) localEnd.toFloat() / durationMs else 1f
+
+    val hasChanges = localStart != startMs || localEnd != endMs
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(EditorColors.Surface)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.LocalFireDepartment,
+                contentDescription = null,
+                tint = EditorColors.Accent,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "Trim: $label",
+                color = EditorColors.TextPrimary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "${timelineTime(localStart)} - ${timelineTime(localEnd)}",
+                color = if (hasChanges) EditorColors.Accent else EditorColors.TextSecondary,
+                fontSize = 11.sp,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+
+            if (hasChanges) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(EditorColors.Accent)
+                        .clickable {
+                            onTrimChanged(localStart, localEnd)
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Check,
+                        contentDescription = "Apply trim",
+                        tint = EditorColors.ScreenBackground,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+                Spacer(modifier = Modifier.width(6.dp))
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(EditorColors.Border)
+                    .clickable(onClick = onDismiss),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Close,
+                    contentDescription = "Close trim",
+                    tint = EditorColors.TextPrimary,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        var trackWidthPx by remember { mutableIntStateOf(0) }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(36.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(EditorColors.ScreenBackground)
+                .onSizeChanged { trackWidthPx = it.width },
+        ) {
+            val density = LocalDensity.current
+            val leftDp = with(density) { (trackWidthPx * startFraction).toDp() }
+            val rightDp = with(density) { (trackWidthPx * (1f - endFraction)).toDp() }
+            val hatchColor = Color.White.copy(alpha = 0.15f)
+
+            if (startFraction > 0f) {
+                Canvas(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .width(leftDp)
+                        .fillMaxHeight(),
+                ) {
+                    val step = 8.dp.toPx()
+                    var x = 0f
+                    while (x < size.width + size.height) {
+                        drawLine(
+                            color = hatchColor,
+                            start = Offset(x, 0f),
+                            end = Offset(x - size.height, size.height),
+                            strokeWidth = 2.dp.toPx(),
+                        )
+                        x += step
+                    }
+                }
+            }
+
+            if (endFraction < 1f) {
+                Canvas(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .width(rightDp)
+                        .fillMaxHeight(),
+                ) {
+                    val step = 8.dp.toPx()
+                    var x = 0f
+                    while (x < size.width + size.height) {
+                        drawLine(
+                            color = hatchColor,
+                            start = Offset(x, 0f),
+                            end = Offset(x - size.height, size.height),
+                            strokeWidth = 2.dp.toPx(),
+                        )
+                        x += step
+                    }
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .padding(start = leftDp, end = rightDp)
+                    .background(EditorColors.Accent.copy(alpha = 0.3f)),
+            )
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = leftDp)
+                    .width(20.dp)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp))
+                    .background(EditorColors.Accent)
+                    .pointerInput(durationMs) {
+                        detectHorizontalDragGestures { change, dragAmount ->
+                            change.consume()
+                            if (trackWidthPx > 0) {
+                                val delta = (dragAmount / trackWidthPx) * durationMs
+                                localStart = (localStart + delta.toLong())
+                                    .coerceIn(0L, localEnd - 300L)
+                            }
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(2.dp)
+                        .height(16.dp)
+                        .background(EditorColors.ScreenBackground, RoundedCornerShape(1.dp)),
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = rightDp)
+                    .width(20.dp)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp))
+                    .background(EditorColors.Accent)
+                    .pointerInput(durationMs) {
+                        detectHorizontalDragGestures { change, dragAmount ->
+                            change.consume()
+                            if (trackWidthPx > 0) {
+                                val delta = (dragAmount / trackWidthPx) * durationMs
+                                localEnd = (localEnd + delta.toLong())
+                                    .coerceIn(localStart + 300L, durationMs)
+                            }
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(2.dp)
+                        .height(16.dp)
+                        .background(EditorColors.ScreenBackground, RoundedCornerShape(1.dp)),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RenameProjectDialog(
+    currentName: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var textState by remember {
+        mutableStateOf(
+            TextFieldValue(
+                text = currentName,
+                selection = TextRange(0, currentName.length),
+            )
+        )
+    }
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 32.dp)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(EditorColors.Surface)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {},
+                    )
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = "Rename Project",
+                    color = EditorColors.TextPrimary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                BasicTextField(
+                    value = textState,
+                    onValueChange = { textState = it.copy(text = it.text.take(60)) },
+                    singleLine = true,
+                    cursorBrush = SolidColor(EditorColors.Accent),
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        color = EditorColors.TextPrimary,
+                        fontSize = 15.sp,
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(EditorColors.ScreenBackground)
+                        .border(1.dp, EditorColors.Accent.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                )
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(EditorColors.Border)
+                            .clickable(onClick = onDismiss)
+                            .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "Cancel",
+                            color = EditorColors.TextSecondary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(EditorColors.Accent)
+                            .clickable {
+                                val trimmed = textState.text.trim()
+                                if (trimmed.isNotBlank()) onConfirm(trimmed) else onDismiss()
+                            }
+                            .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "Rename",
+                            color = EditorColors.ScreenBackground,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1454,6 +2046,515 @@ private fun timelineTime(millis: Long): String {
     return "%02d:%02d".format(minutes, seconds)
 }
 
+@Composable
+private fun TextOverlayTrackRow(
+    overlay: EditorContract.TextOverlayItem,
+    totalTimelineWidth: Float,
+    totalDurationMs: Long,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    if (totalDurationMs <= 0L) return
+
+    val startFraction = overlay.startMs.toFloat() / totalDurationMs
+    val durationFraction = (overlay.endMs - overlay.startMs).toFloat() / totalDurationMs
+    val offsetDp = totalTimelineWidth * startFraction
+    val widthDp = (totalTimelineWidth * durationFraction).coerceAtLeast(40f)
+
+    Box(
+        modifier = Modifier
+            .width(totalTimelineWidth.dp)
+            .height(28.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .padding(start = offsetDp.dp)
+                .width(widthDp.dp)
+                .height(28.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color(0xFF00D4AA).copy(alpha = 0.20f))
+                .border(1.dp, Color(0xFF00D4AA).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                .clickable(onClick = onEdit),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.TextFields,
+                    contentDescription = null,
+                    tint = Color(0xFF00D4AA),
+                    modifier = Modifier.size(12.dp),
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = overlay.text,
+                    color = EditorColors.TextPrimary,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Box(
+                    modifier = Modifier
+                        .size(16.dp)
+                        .clip(CircleShape)
+                        .background(EditorColors.Surface)
+                        .clickable(onClick = onDelete),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Close,
+                        contentDescription = "Remove text",
+                        tint = EditorColors.TextMuted,
+                        modifier = Modifier.size(9.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TextOverlayInputDialog(
+    editingOverlay: EditorContract.TextOverlayItem?,
+    totalDurationMs: Long,
+    onConfirm: (String, EditorContract.TextOverlayGravity, Long) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val defaultDuration = editingOverlay?.let { it.endMs - it.startMs }
+        ?: (totalDurationMs * 0.30).toLong().coerceIn(1_000L, 5_000L)
+
+    var textState by remember(editingOverlay) {
+        mutableStateOf(
+            TextFieldValue(
+                text = editingOverlay?.text ?: "",
+                selection = TextRange(0, editingOverlay?.text?.length ?: 0),
+            )
+        )
+    }
+    var selectedGravity by remember(editingOverlay) {
+        mutableStateOf(editingOverlay?.gravity ?: EditorContract.TextOverlayGravity.CENTER)
+    }
+    var durationSeconds by remember(editingOverlay) {
+        mutableStateOf((defaultDuration / 1000f).let { "%.1f".format(it) })
+    }
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.85f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 28.dp)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(EditorColors.Surface)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {},
+                    )
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = if (editingOverlay != null) "Edit Text" else "Add Text",
+                    color = EditorColors.TextPrimary,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                BasicTextField(
+                    value = textState,
+                    onValueChange = { textState = it.copy(text = it.text.take(100)) },
+                    singleLine = false,
+                    maxLines = 3,
+                    cursorBrush = SolidColor(EditorColors.Accent),
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        color = EditorColors.TextPrimary,
+                        fontSize = 16.sp,
+                        textAlign = TextAlign.Center,
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(EditorColors.ScreenBackground)
+                        .border(
+                            1.dp,
+                            EditorColors.Accent.copy(alpha = 0.5f),
+                            RoundedCornerShape(12.dp),
+                        )
+                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                    decorationBox = { innerTextField ->
+                        Box(contentAlignment = Alignment.Center) {
+                            if (textState.text.isEmpty()) {
+                                Text(
+                                    text = "Type your text here...",
+                                    color = EditorColors.TextMuted,
+                                    fontSize = 16.sp,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
+                            innerTextField()
+                        }
+                    },
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Duration input
+                Text(
+                    text = "Duration (seconds)",
+                    color = EditorColors.TextSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                BasicTextField(
+                    value = durationSeconds,
+                    onValueChange = { input ->
+                        if (input.isEmpty() || input.matches(Regex("^\\d{0,3}\\.?\\d{0,1}$"))) {
+                            durationSeconds = input
+                        }
+                    },
+                    singleLine = true,
+                    cursorBrush = SolidColor(EditorColors.Accent),
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        color = EditorColors.TextPrimary,
+                        fontSize = 16.sp,
+                        textAlign = TextAlign.Center,
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(EditorColors.ScreenBackground)
+                        .border(
+                            1.dp,
+                            EditorColors.Border,
+                            RoundedCornerShape(12.dp),
+                        )
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    decorationBox = { innerTextField ->
+                        Box(contentAlignment = Alignment.Center) {
+                            if (durationSeconds.isEmpty()) {
+                                Text(
+                                    text = "e.g. 3.0",
+                                    color = EditorColors.TextMuted,
+                                    fontSize = 16.sp,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
+                            innerTextField()
+                        }
+                    },
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "Position",
+                    color = EditorColors.TextSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    EditorContract.TextOverlayGravity.entries.forEach { gravity ->
+                        val isSelected = gravity == selectedGravity
+                        val label = when (gravity) {
+                            EditorContract.TextOverlayGravity.TOP_CENTER -> "Top"
+                            EditorContract.TextOverlayGravity.CENTER -> "Center"
+                            EditorContract.TextOverlayGravity.BOTTOM_CENTER -> "Bottom"
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (isSelected) EditorColors.Accent.copy(alpha = 0.15f)
+                                    else EditorColors.ScreenBackground,
+                                )
+                                .border(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) EditorColors.Accent
+                                    else EditorColors.Border,
+                                    shape = RoundedCornerShape(10.dp),
+                                )
+                                .clickable { selectedGravity = gravity }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) EditorColors.Accent
+                                else EditorColors.TextSecondary,
+                                fontSize = 13.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold
+                                else FontWeight.Normal,
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(EditorColors.Border)
+                            .clickable(onClick = onDismiss)
+                            .padding(vertical = 14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "Cancel",
+                            color = EditorColors.TextSecondary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (textState.text.isNotBlank()) EditorColors.Accent
+                                else EditorColors.Accent.copy(alpha = 0.4f),
+                            )
+                            .clickable {
+                                val trimmed = textState.text.trim()
+                                val durMs = (durationSeconds.toFloatOrNull() ?: 3f)
+                                    .coerceIn(0.5f, totalDurationMs / 1000f)
+                                    .let { (it * 1000).toLong() }
+                                if (trimmed.isNotBlank()) onConfirm(trimmed, selectedGravity, durMs)
+                            }
+                            .padding(vertical = 14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = if (editingOverlay != null) "Update" else "Add",
+                            color = EditorColors.ScreenBackground,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DraggableTextOverlay(
+    overlay: EditorContract.TextOverlayItem,
+    previewSize: androidx.compose.ui.unit.IntSize,
+    onPositionChanged: (Float, Float) -> Unit,
+    onRotationChanged: (Float) -> Unit,
+    onDoubleTap: () -> Unit,
+) {
+    val density = LocalDensity.current
+
+    var currentXFraction by remember(overlay.id) { mutableFloatStateOf(overlay.offsetXFraction) }
+    var currentYFraction by remember(overlay.id) { mutableFloatStateOf(overlay.offsetYFraction) }
+    var currentRotation by remember(overlay.id) { mutableFloatStateOf(overlay.rotationDegrees) }
+
+    // Sync from state when not dragging
+    LaunchedEffect(overlay.offsetXFraction, overlay.offsetYFraction, overlay.rotationDegrees) {
+        currentXFraction = overlay.offsetXFraction
+        currentYFraction = overlay.offsetYFraction
+        currentRotation = overlay.rotationDegrees
+    }
+
+    if (previewSize.width <= 0 || previewSize.height <= 0) return
+
+    val offsetX = currentXFraction * previewSize.width
+    val offsetY = currentYFraction * previewSize.height
+
+    val transformState = rememberTransformableState { _, pan, rotationChange ->
+        val newX = (currentXFraction + pan.x / previewSize.width).coerceIn(0.05f, 0.95f)
+        val newY = (currentYFraction + pan.y / previewSize.height).coerceIn(0.05f, 0.95f)
+        currentXFraction = newX
+        currentYFraction = newY
+        onPositionChanged(newX, newY)
+
+        currentRotation += rotationChange
+        onRotationChanged(currentRotation)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize(),
+        contentAlignment = Alignment.TopStart,
+    ) {
+        Text(
+            text = overlay.text,
+            color = Color.White,
+            fontSize = overlay.textSizeSp.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .offset {
+                    IntOffset(
+                        (offsetX - 60 * density.density).roundToInt(),
+                        offsetY.roundToInt(),
+                    )
+                }
+                .graphicsLayer {
+                    rotationZ = currentRotation
+                }
+                .pointerInput(overlay.id) {
+                    detectTapGestures(
+                        onDoubleTap = { onDoubleTap() },
+                    )
+                }
+                .transformable(transformState)
+                .background(
+                    Color.Black.copy(alpha = 0.4f),
+                    RoundedCornerShape(8.dp),
+                )
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+    }
+}
+
+@Composable
+private fun DurationPickerDialog(
+    currentDurationMs: Long,
+    maxDurationMs: Long,
+    onConfirm: (Long) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var durationText by remember {
+        mutableStateOf("%.1f".format(currentDurationMs / 1000f))
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(EditorColors.Surface)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = "Text Duration",
+                color = EditorColors.TextPrimary,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "How long should this text appear? (seconds)",
+                color = EditorColors.TextSecondary,
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center,
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            BasicTextField(
+                value = durationText,
+                onValueChange = { input ->
+                    if (input.isEmpty() || input.matches(Regex("^\\d{0,3}\\.?\\d{0,1}$"))) {
+                        durationText = input
+                    }
+                },
+                singleLine = true,
+                cursorBrush = SolidColor(EditorColors.Accent),
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    color = EditorColors.TextPrimary,
+                    fontSize = 22.sp,
+                    textAlign = TextAlign.Center,
+                    fontWeight = FontWeight.Bold,
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(EditorColors.ScreenBackground)
+                    .border(1.dp, EditorColors.Accent.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(EditorColors.Border)
+                        .clickable(onClick = onDismiss)
+                        .padding(vertical = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("Cancel", color = EditorColors.TextSecondary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(EditorColors.Accent)
+                        .clickable {
+                            val durMs = (durationText.toFloatOrNull() ?: (currentDurationMs / 1000f))
+                                .coerceIn(0.5f, maxDurationMs / 1000f)
+                                .let { (it * 1000).toLong() }
+                            onConfirm(durMs)
+                        }
+                        .padding(vertical = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("Apply", color = EditorColors.ScreenBackground, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+}
+
 private object EditorColors {
     val ScreenBackground = Color(0xFF0E1117)
     val Surface = Color(0xFF161B22)
@@ -1467,7 +2568,4 @@ private object EditorColors {
     val TextSecondary = Color(0xFF8B949E)
     val TextMuted = Color(0xFF484F58)
 
-    val Success = Color(0xFF3FB950)
-    val Warning = Color(0xFFD29922)
-    val Error = Color(0xFFF85149)
 }

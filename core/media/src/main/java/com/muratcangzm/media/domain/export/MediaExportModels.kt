@@ -26,6 +26,8 @@ data class MediaExportRequest(
         preserveOriginalClipAudio = true,
     ),
     val outputFileBaseName: String,
+    val outputWidth: Int? = null,
+    val outputHeight: Int? = null,
 )
 
 sealed interface MediaExportState {

@@ -6,6 +6,7 @@ import com.muratcangzm.model.id.ProjectId
 enum class ExportResolution(val width: Int, val height: Int) {
     HD_720(720, 1280),
     FHD_1080(1080, 1920),
+    QHD_2K(1440, 2560),
     UHD_4K(2160, 3840),
 }
 

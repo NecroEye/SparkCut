@@ -1,7 +1,7 @@
 [versions]
-agp = "9.0.1"
-kotlin = "2.3.10"
-ksp = "2.2.10-2.0.2"
+agp = "9.1.1"
+kotlin = "2.3.20"
+ksp = "2.3.2"
 
 coreKtx = "1.18.0"
 junit = "4.13.2"
@@ -11,19 +11,19 @@ espressoCore = "3.7.0"
 lifecycle = "2.10.0"
 activityCompose = "1.13.0"
 navigation = "2.9.7"
-composeBom = "2026.03.00"
+composeBom = "2026.04.01"
 
 room = "2.8.4"
 datastore = "1.2.1"
-media3 = "1.9.2"
-koinBom = "4.1.1"
-ads = "25.0.0"
+media3 = "1.10.0"
+koinBom = "4.2.1"
+ads = "25.2.0"
 appcompat = "1.7.1"
 material = "1.13.0"
 exifinterface = "1.4.2"
 
-kotlinxSerialization = "1.10.0"
-kotlinxSerializationCore = "1.10.0"
+kotlinxSerialization = "1.11.0"
+kotlinxSerializationCore = "1.11.0"
 nav3 = "1.0.1"
 lifecycleViewmodelNav3 = "2.11.0-alpha02"
 material3AdaptiveNav3 = "1.3.0-alpha09"
@@ -91,4 +91,3 @@ android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

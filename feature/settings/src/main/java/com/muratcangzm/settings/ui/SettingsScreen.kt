@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,7 +20,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -34,7 +34,6 @@ import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -52,6 +51,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -70,6 +70,16 @@ private object SettingsColors {
     val Destructive = Color(0xFFF85149)
     val GradientStart = Color(0xFF00D4AA)
     val GradientEnd = Color(0xFF7F73FF)
+}
+
+private object SettingsLayout {
+    val HorizontalPadding = 20.dp
+    val RowVerticalPadding = 12.dp
+    val ItemIconSize = 40.dp
+    val ItemIconCornerRadius = 12.dp
+    val ItemIconInnerSize = 20.dp
+    val ItemIconSpacing = 14.dp
+    val OptionRowStartIndent = ItemIconSize + ItemIconSpacing
 }
 
 @Composable
@@ -115,7 +125,7 @@ private fun SettingsScreenContent(
         ) {
             SettingsTopBar(onBack = { onEvent(SettingsContract.Event.BackClicked) })
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             SettingsSectionHeader(title = "Export")
 
@@ -149,7 +159,7 @@ private fun SettingsScreenContent(
                 },
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             SettingsSectionHeader(title = "Editor")
 
@@ -177,7 +187,7 @@ private fun SettingsScreenContent(
                 onToggle = { onEvent(SettingsContract.Event.WatermarkToggled(it)) },
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             SettingsSectionHeader(title = "Storage")
 
@@ -189,7 +199,7 @@ private fun SettingsScreenContent(
                 onClick = { onEvent(SettingsContract.Event.ClearCacheClicked) },
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             SettingsSectionHeader(title = "General")
 
@@ -201,14 +211,14 @@ private fun SettingsScreenContent(
                 onClick = { onEvent(SettingsContract.Event.ResetToDefaultsClicked) },
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             SettingsFooter(appVersion = state.appVersion)
 
             Spacer(
                 modifier = Modifier
                     .navigationBarsPadding()
-                    .height(24.dp),
+                    .height(20.dp),
             )
         }
     }
@@ -220,23 +230,31 @@ private fun SettingsTopBar(onBack: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(horizontal = 8.dp, vertical = 12.dp),
+            .padding(horizontal = SettingsLayout.HorizontalPadding, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onBack) {
+        Box(
+            modifier = Modifier
+                .size(SettingsLayout.ItemIconSize)
+                .clip(RoundedCornerShape(SettingsLayout.ItemIconCornerRadius))
+                .background(SettingsColors.Surface)
+                .clickable(onClick = onBack),
+            contentAlignment = Alignment.Center,
+        ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
                 contentDescription = "Back",
                 tint = SettingsColors.TextPrimary,
+                modifier = Modifier.size(SettingsLayout.ItemIconInnerSize),
             )
         }
 
-        Spacer(modifier = Modifier.width(4.dp))
+        Spacer(modifier = Modifier.width(SettingsLayout.ItemIconSpacing))
 
         Text(
             text = "Settings",
             color = SettingsColors.TextPrimary,
-            fontSize = 20.sp,
+            fontSize = 21.sp,
             fontWeight = FontWeight.Bold,
         )
     }
@@ -250,7 +268,10 @@ private fun SettingsSectionHeader(title: String) {
         fontSize = 12.sp,
         fontWeight = FontWeight.SemiBold,
         letterSpacing = 1.sp,
-        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        modifier = Modifier.padding(
+            horizontal = SettingsLayout.HorizontalPadding,
+            vertical = 8.dp,
+        ),
     )
 }
 
@@ -266,13 +287,16 @@ private fun SettingsToggleRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onToggle(!checked) }
-            .padding(horizontal = 20.dp, vertical = 14.dp),
+            .padding(
+                horizontal = SettingsLayout.HorizontalPadding,
+                vertical = SettingsLayout.RowVerticalPadding,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .size(SettingsLayout.ItemIconSize)
+                .clip(RoundedCornerShape(SettingsLayout.ItemIconCornerRadius))
                 .background(SettingsColors.Surface),
             contentAlignment = Alignment.Center,
         ) {
@@ -280,11 +304,11 @@ private fun SettingsToggleRow(
                 imageVector = icon,
                 contentDescription = null,
                 tint = SettingsColors.Accent,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(SettingsLayout.ItemIconInnerSize),
             )
         }
 
-        Spacer(modifier = Modifier.width(14.dp))
+        Spacer(modifier = Modifier.width(SettingsLayout.ItemIconSpacing))
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -326,13 +350,16 @@ private fun SettingsOptionPicker(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 10.dp),
+            .padding(
+                horizontal = SettingsLayout.HorizontalPadding,
+                vertical = 8.dp,
+            ),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(SettingsLayout.ItemIconSize)
+                    .clip(RoundedCornerShape(SettingsLayout.ItemIconCornerRadius))
                     .background(SettingsColors.Surface),
                 contentAlignment = Alignment.Center,
             ) {
@@ -340,11 +367,11 @@ private fun SettingsOptionPicker(
                     imageVector = icon,
                     contentDescription = null,
                     tint = SettingsColors.Accent,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(SettingsLayout.ItemIconInnerSize),
                 )
             }
 
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(SettingsLayout.ItemIconSpacing))
 
             Column {
                 Text(
@@ -365,8 +392,8 @@ private fun SettingsOptionPicker(
 
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 54.dp),
+                .padding(start = SettingsLayout.OptionRowStartIndent)
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             options.forEachIndexed { index, label ->
@@ -393,6 +420,8 @@ private fun SettingsOptionPicker(
                     color = textColor,
                     fontSize = 12.sp,
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .background(bgColor)
@@ -418,13 +447,16 @@ private fun SettingsActionRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = !isLoading, onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
+            .padding(
+                horizontal = SettingsLayout.HorizontalPadding,
+                vertical = SettingsLayout.RowVerticalPadding,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .size(SettingsLayout.ItemIconSize)
+                .clip(RoundedCornerShape(SettingsLayout.ItemIconCornerRadius))
                 .background(SettingsColors.Surface),
             contentAlignment = Alignment.Center,
         ) {
@@ -439,12 +471,12 @@ private fun SettingsActionRow(
                     imageVector = icon,
                     contentDescription = null,
                     tint = if (isDestructive) SettingsColors.Destructive else SettingsColors.Accent,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(SettingsLayout.ItemIconInnerSize),
                 )
             }
         }
 
-        Spacer(modifier = Modifier.width(14.dp))
+        Spacer(modifier = Modifier.width(SettingsLayout.ItemIconSpacing))
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -467,7 +499,7 @@ private fun SettingsFooter(appVersion: String) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp),
+            .padding(horizontal = SettingsLayout.HorizontalPadding),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
@@ -509,7 +541,7 @@ private fun SettingsFooter(appVersion: String) {
         Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "Made with \u2764 by MuratCan",
+            text = "Made with \u2764 by Muratcan Gözüm",
             color = SettingsColors.TextMuted,
             fontSize = 11.sp,
         )

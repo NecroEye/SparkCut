@@ -125,12 +125,14 @@ class EditorViewModel(
             }
 
             EditorContract.Event.SeekBack -> {
-                val newPos = (_state.value.playbackPositionMs - 1_000L).coerceAtLeast(0L)
+                val stepMs = (_state.value.totalDurationMs * 0.20).toLong().coerceAtLeast(500L)
+                val newPos = (_state.value.playbackPositionMs - stepMs).coerceAtLeast(0L)
                 onEvent(EditorContract.Event.SeekTo(newPos))
             }
 
             EditorContract.Event.SeekForward -> {
-                val newPos = (_state.value.playbackPositionMs + 1_000L)
+                val stepMs = (_state.value.totalDurationMs * 0.20).toLong().coerceAtLeast(500L)
+                val newPos = (_state.value.playbackPositionMs + stepMs)
                     .coerceAtMost(_state.value.totalDurationMs)
                 onEvent(EditorContract.Event.SeekTo(newPos))
             }
@@ -188,15 +190,19 @@ class EditorViewModel(
             }
 
             is EditorContract.Event.ToolbarTabSelected -> {
-                _state.update {
-                    if (it.activeToolbarTab == event.tab) {
-                        it.copy(activeToolbarTab = null, showCaptionsPanel = false, showAutoCaptionsSheet = false)
-                    } else {
-                        it.copy(
-                            activeToolbarTab = event.tab,
-                            showCaptionsPanel = event.tab == EditorContract.ToolbarTab.Captions,
-                            showAutoCaptionsSheet = false,
-                        )
+                if (event.tab == EditorContract.ToolbarTab.Text) {
+                    onEvent(EditorContract.Event.AddTextOverlay)
+                } else {
+                    _state.update {
+                        if (it.activeToolbarTab == event.tab) {
+                            it.copy(activeToolbarTab = null, showCaptionsPanel = false, showAutoCaptionsSheet = false)
+                        } else {
+                            it.copy(
+                                activeToolbarTab = event.tab,
+                                showCaptionsPanel = event.tab == EditorContract.ToolbarTab.Captions,
+                                showAutoCaptionsSheet = false,
+                            )
+                        }
                     }
                 }
             }
@@ -259,6 +265,135 @@ class EditorViewModel(
 
             is EditorContract.Event.AspectRatioSelected -> {
                 _state.update { it.copy(selectedAspectRatio = event.ratio) }
+                scheduleAutosave()
+            }
+
+            is EditorContract.Event.ResolutionSelected -> {
+                _state.update { it.copy(selectedResolution = event.resolution) }
+                scheduleAutosave()
+            }
+
+            EditorContract.Event.AddTextOverlay -> {
+                _state.update {
+                    it.copy(
+                        showTextOverlayInput = true,
+                        editingTextOverlayId = null,
+                        activeToolbarTab = EditorContract.ToolbarTab.Text,
+                    )
+                }
+            }
+
+            is EditorContract.Event.ConfirmTextOverlay -> {
+                if (event.text.isBlank()) return
+                val positionMs = _state.value.playbackPositionMs
+                val durationMs = event.durationMs.coerceIn(500L, _state.value.totalDurationMs)
+                val newOverlay = EditorContract.TextOverlayItem(
+                    id = UUID.randomUUID().toString(),
+                    text = event.text,
+                    startMs = positionMs,
+                    endMs = (positionMs + durationMs).coerceAtMost(_state.value.totalDurationMs),
+                    gravity = event.gravity,
+                    offsetXFraction = 0.5f,
+                    offsetYFraction = when (event.gravity) {
+                        EditorContract.TextOverlayGravity.TOP_CENTER -> 0.15f
+                        EditorContract.TextOverlayGravity.CENTER -> 0.5f
+                        EditorContract.TextOverlayGravity.BOTTOM_CENTER -> 0.85f
+                    },
+                )
+                _state.update {
+                    it.copy(
+                        textOverlays = it.textOverlays + newOverlay,
+                        showTextOverlayInput = false,
+                    )
+                }
+                scheduleAutosave()
+            }
+
+            EditorContract.Event.DismissTextOverlayInput -> {
+                _state.update { it.copy(showTextOverlayInput = false, editingTextOverlayId = null) }
+            }
+
+            is EditorContract.Event.DeleteTextOverlay -> {
+                _state.update {
+                    it.copy(textOverlays = it.textOverlays.filter { o -> o.id != event.overlayId })
+                }
+                scheduleAutosave()
+            }
+
+            is EditorContract.Event.EditTextOverlay -> {
+                _state.update {
+                    it.copy(showTextOverlayInput = true, editingTextOverlayId = event.overlayId)
+                }
+            }
+
+            is EditorContract.Event.UpdateTextOverlay -> {
+                if (event.text.isBlank()) return
+                _state.update {
+                    it.copy(
+                        textOverlays = it.textOverlays.map { o ->
+                            if (o.id == event.overlayId) {
+                                val newEnd = (o.startMs + event.durationMs).coerceAtMost(it.totalDurationMs)
+                                o.copy(
+                                    text = event.text,
+                                    gravity = event.gravity,
+                                    endMs = newEnd,
+                                )
+                            } else o
+                        },
+                        showTextOverlayInput = false,
+                        editingTextOverlayId = null,
+                    )
+                }
+                scheduleAutosave()
+            }
+
+            is EditorContract.Event.TextOverlayPositionChanged -> {
+                _state.update {
+                    it.copy(
+                        textOverlays = it.textOverlays.map { o ->
+                            if (o.id == event.overlayId) o.copy(
+                                offsetXFraction = event.xFraction.coerceIn(0.05f, 0.95f),
+                                offsetYFraction = event.yFraction.coerceIn(0.05f, 0.95f),
+                            ) else o
+                        },
+                    )
+                }
+                scheduleAutosave()
+            }
+
+            is EditorContract.Event.TextOverlayRotationChanged -> {
+                _state.update {
+                    it.copy(
+                        textOverlays = it.textOverlays.map { o ->
+                            if (o.id == event.overlayId) o.copy(rotationDegrees = event.rotationDegrees)
+                            else o
+                        },
+                    )
+                }
+                scheduleAutosave()
+            }
+
+            is EditorContract.Event.ShowDurationPicker -> {
+                _state.update { it.copy(showDurationPickerOverlayId = event.overlayId) }
+            }
+
+            EditorContract.Event.DismissDurationPicker -> {
+                _state.update { it.copy(showDurationPickerOverlayId = null) }
+            }
+
+            is EditorContract.Event.TextOverlayDurationChanged -> {
+                _state.update {
+                    it.copy(
+                        textOverlays = it.textOverlays.map { o ->
+                            if (o.id == event.overlayId) {
+                                val newEnd = (o.startMs + event.durationMs.coerceIn(500L, it.totalDurationMs))
+                                    .coerceAtMost(it.totalDurationMs)
+                                o.copy(endMs = newEnd)
+                            } else o
+                        },
+                        showDurationPickerOverlayId = null,
+                    )
+                }
                 scheduleAutosave()
             }
 
@@ -333,17 +468,73 @@ class EditorViewModel(
                 resolveAudioTrack(event.uri)
             }
 
-            EditorContract.Event.RemoveAudioTrack -> {
-                _state.update { it.copy(audioTrack = null) }
+            is EditorContract.Event.RemoveAudioTrack -> {
+                _state.update { current ->
+                    current.copy(audioTracks = current.audioTracks.filter { it.id != event.audioId })
+                }
                 scheduleAutosave()
             }
 
             is EditorContract.Event.AudioVolumeChanged -> {
-                val track = _state.value.audioTrack ?: return
-                _state.update {
-                    it.copy(audioTrack = track.copy(volume = event.volume.coerceIn(0f, 1f)))
+                _state.update { current ->
+                    current.copy(audioTracks = current.audioTracks.map { track ->
+                        if (track.id == event.audioId) track.copy(volume = event.volume.coerceIn(0f, 1f)) else track
+                    })
                 }
                 scheduleAutosave()
+            }
+
+            is EditorContract.Event.AudioTrimChanged -> {
+                _state.update { current ->
+                    current.copy(audioTracks = current.audioTracks.map { track ->
+                        if (track.id == event.audioId) {
+                            val safeStart = event.startMs.coerceIn(0L, track.durationMs)
+                            val safeEnd = event.endMs.coerceIn(safeStart + 300L, track.durationMs)
+                            track.copy(trimStartMs = safeStart, trimEndMs = safeEnd)
+                        } else track
+                    })
+                }
+                scheduleAutosave()
+            }
+
+            is EditorContract.Event.AudioOffsetChanged -> {
+                _state.update { current ->
+                    val totalMs = current.totalDurationMs
+                    current.copy(audioTracks = current.audioTracks.map { track ->
+                        if (track.id == event.audioId) {
+                            track.copy(offsetMs = event.offsetMs.coerceIn(0L, totalMs))
+                        } else track
+                    })
+                }
+                scheduleAutosave()
+            }
+
+            is EditorContract.Event.OpenMediaTrimmer -> {
+                _state.update { it.copy(trimmingMediaUri = event.uri, trimmingAudioId = null) }
+            }
+
+            EditorContract.Event.DismissTrimmer -> {
+                _state.update { it.copy(trimmingMediaUri = null, trimmingAudioId = null) }
+            }
+
+            is EditorContract.Event.OpenAudioTrimmer -> {
+                _state.update { it.copy(trimmingAudioId = event.audioId, trimmingMediaUri = null) }
+            }
+
+            EditorContract.Event.ProjectNameClicked -> {
+                _state.update { it.copy(showRenameDialog = true) }
+            }
+
+            is EditorContract.Event.ProjectNameChanged -> {
+                val trimmed = event.name.trim().take(60)
+                if (trimmed.isNotBlank()) {
+                    _state.update { it.copy(projectName = trimmed, showRenameDialog = false) }
+                    scheduleAutosave()
+                }
+            }
+
+            EditorContract.Event.DismissRenameDialog -> {
+                _state.update { it.copy(showRenameDialog = false) }
             }
 
             EditorContract.Event.ExportClicked -> handleExport()
@@ -481,18 +672,21 @@ class EditorViewModel(
             val selectedTransition = session.draft.transitionOverrides.firstOrNull()?.transition
                 ?: TransitionPreset.CUT
 
-            val restoredAudioTrack = session.draft.audioSelection.let { audio ->
+            val restoredAudioTracks = session.draft.audioSelection.let { audio ->
                 val uri = audio.localUri
                 if (audio.sourceKind == AudioSourceKind.LOCAL_URI && !uri.isNullOrBlank()) {
-                    EditorContract.AudioTrackItem(
-                        uri = uri,
-                        fileName = uri.toUri().lastPathSegment ?: "Audio",
-                        durationMs = audio.endMs ?: 0L,
-                        trimStartMs = audio.startMs,
-                        trimEndMs = audio.endMs,
-                        volume = audio.volume,
+                    listOf(
+                        EditorContract.AudioTrackItem(
+                            id = UUID.randomUUID().toString(),
+                            uri = uri,
+                            fileName = uri.toUri().lastPathSegment ?: "Audio",
+                            durationMs = audio.endMs ?: 0L,
+                            trimStartMs = audio.startMs,
+                            trimEndMs = audio.endMs,
+                            volume = audio.volume,
+                        )
                     )
-                } else null
+                } else emptyList()
             }
 
             _state.update {
@@ -501,7 +695,7 @@ class EditorViewModel(
                     isResolvingMedia = false,
                     projectName = session.draft.name,
                     selectedMedia = selectedMedia,
-                    audioTrack = restoredAudioTrack,
+                    audioTracks = restoredAudioTracks,
                     transitions = enumValues<TransitionPreset>().map { preset ->
                         EditorContract.TransitionItem(
                             preset = preset,
@@ -575,12 +769,13 @@ class EditorViewModel(
                     ?: "Audio"
 
                 val audioTrack = EditorContract.AudioTrackItem(
+                    id = UUID.randomUUID().toString(),
                     uri = uri,
                     fileName = displayName,
                     durationMs = durationMs,
                 )
 
-                _state.update { it.copy(audioTrack = audioTrack) }
+                _state.update { it.copy(audioTracks = it.audioTracks + audioTrack) }
                 scheduleAutosave()
             } catch (_: Throwable) {
                 _effects.tryEmit(
@@ -783,7 +978,43 @@ class EditorViewModel(
                         transitionDurationMs = currentState.transitionDurationMs,
                         transitionIntensityPercent = currentState.transitionIntensityPercent,
                         aspectRatioLabel = currentState.selectedAspectRatio,
-                        backgroundMusicUri = currentState.audioTrack?.uri,
+                        backgroundMusicUri = currentState.audioTracks.firstOrNull()?.uri,
+                        isMuted = currentState.isMuted,
+                        audioTracks = currentState.audioTracks.map { track ->
+                            EditorContract.ExportAudioTrackPayload(
+                                uri = track.uri,
+                                fileName = track.fileName,
+                                durationMs = track.durationMs,
+                                trimStartMs = track.trimStartMs,
+                                trimEndMs = track.trimEndMs,
+                                volume = track.volume,
+                                offsetMs = track.offsetMs,
+                            )
+                        },
+                        resolutionWidth = currentState.selectedResolution.shortWidth,
+                        resolutionHeight = currentState.selectedResolution.shortHeight,
+                        captions = currentState.captions
+                            .filter { it.text.isNotBlank() }
+                            .map { caption ->
+                                EditorContract.CaptionPayload(
+                                    id = caption.id,
+                                    text = caption.text,
+                                    startMs = caption.startMs,
+                                    endMs = caption.endMs,
+                                )
+                            },
+                        textOverlays = currentState.textOverlays
+                            .filter { it.text.isNotBlank() }
+                            .map { overlay ->
+                                EditorContract.TextOverlayPayload(
+                                    id = overlay.id,
+                                    text = overlay.text,
+                                    startMs = overlay.startMs,
+                                    endMs = overlay.endMs,
+                                    gravity = overlay.gravity.name,
+                                    textSizeSp = overlay.textSizeSp,
+                                )
+                            },
                     )
                 )
             )
@@ -852,11 +1083,12 @@ class EditorViewModel(
                 id = projectId,
                 name = current.projectName,
                 templateId = TemplateId("direct-media"),
-                aspectRatio = AspectRatio.VERTICAL_9_16,
+                aspectRatio = AspectRatio.fromLabel(current.selectedAspectRatio)
+                    ?: AspectRatio.VERTICAL_9_16,
                 slotBindings = slotBindings,
                 textValues = current.textFields.map { ProjectTextValue(fieldId = it.id, value = it.value) },
                 transitionOverrides = transitionOverrides,
-                audioSelection = current.audioTrack?.let { track ->
+                audioSelection = current.audioTracks.firstOrNull()?.let { track ->
                     ProjectAudioSelection(
                         sourceKind = AudioSourceKind.LOCAL_URI,
                         localUri = track.uri,

@@ -18,10 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AspectRatio
-import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.ClosedCaption
-import androidx.compose.material.icons.outlined.FilterAlt
-import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -149,18 +146,12 @@ private fun ToolbarItem(
 
 private fun EditorContract.ToolbarTab.icon(): ImageVector = when (this) {
     EditorContract.ToolbarTab.Text -> Icons.Outlined.TextFields
-    EditorContract.ToolbarTab.Overlay -> Icons.Outlined.Layers
-    EditorContract.ToolbarTab.Effects -> Icons.Outlined.AutoFixHigh
     EditorContract.ToolbarTab.Captions -> Icons.Outlined.ClosedCaption
     EditorContract.ToolbarTab.AspectRatio -> Icons.Outlined.AspectRatio
-    EditorContract.ToolbarTab.Filters -> Icons.Outlined.FilterAlt
 }
 
 private fun EditorContract.ToolbarTab.label(): String = when (this) {
     EditorContract.ToolbarTab.Text -> "Text"
-    EditorContract.ToolbarTab.Overlay -> "Overlay"
-    EditorContract.ToolbarTab.Effects -> "Effects"
     EditorContract.ToolbarTab.Captions -> "Captions"
     EditorContract.ToolbarTab.AspectRatio -> "Aspect ratio"
-    EditorContract.ToolbarTab.Filters -> "Filters"
 }

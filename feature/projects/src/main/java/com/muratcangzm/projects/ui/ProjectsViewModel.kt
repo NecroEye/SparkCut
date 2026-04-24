@@ -110,5 +110,6 @@ private fun com.muratcangzm.model.template.AspectRatio.displayLabel(): String = 
     com.muratcangzm.model.template.AspectRatio.VERTICAL_9_16 -> "9:16"
     com.muratcangzm.model.template.AspectRatio.PORTRAIT_4_5 -> "4:5"
     com.muratcangzm.model.template.AspectRatio.SQUARE_1_1 -> "1:1"
+    com.muratcangzm.model.template.AspectRatio.LANDSCAPE_4_3 -> "4:3"
     com.muratcangzm.model.template.AspectRatio.LANDSCAPE_16_9 -> "16:9"
 }

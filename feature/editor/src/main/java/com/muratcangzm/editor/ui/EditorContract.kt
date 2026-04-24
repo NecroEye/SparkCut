@@ -7,15 +7,19 @@ import com.muratcangzm.model.template.TransitionPreset
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
+enum class EditorResolutionOption(val label: String, val shortWidth: Int, val shortHeight: Int) {
+    HD_720("720p", 720, 1280),
+    FHD_1080("1080p", 1080, 1920),
+    QHD_2K("2K", 1440, 2560),
+    UHD_4K("4K", 2160, 3840),
+}
+
 interface EditorContract {
 
     enum class ToolbarTab {
         Text,
-        Overlay,
-        Effects,
         Captions,
         AspectRatio,
-        Filters,
     }
 
     enum class CaptionsOption {
@@ -51,6 +55,25 @@ interface EditorContract {
     )
 
     @Immutable
+    data class TextOverlayItem(
+        val id: String,
+        val text: String,
+        val startMs: Long,
+        val endMs: Long,
+        val gravity: TextOverlayGravity = TextOverlayGravity.CENTER,
+        val textSizeSp: Float = 24f,
+        val offsetXFraction: Float = 0.5f,
+        val offsetYFraction: Float = 0.5f,
+        val rotationDegrees: Float = 0f,
+    )
+
+    enum class TextOverlayGravity {
+        TOP_CENTER,
+        CENTER,
+        BOTTOM_CENTER,
+    }
+
+    @Immutable
     data class AutosaveState(
         val status: Status = Status.Idle,
         val message: String? = null,
@@ -60,12 +83,14 @@ interface EditorContract {
 
     @Immutable
     data class AudioTrackItem(
+        val id: String,
         val uri: String,
         val fileName: String,
         val durationMs: Long,
         val trimStartMs: Long = 0L,
         val trimEndMs: Long? = null,
         val volume: Float = 1f,
+        val offsetMs: Long = 0L,
     ) {
         val effectiveDurationMs: Long
             get() = (trimEndMs ?: durationMs) - trimStartMs
@@ -76,8 +101,11 @@ interface EditorContract {
         val isLoading: Boolean = true,
         val isResolvingMedia: Boolean = false,
         val projectName: String = "Untitled Project",
+        val showRenameDialog: Boolean = false,
         val selectedMedia: List<SelectedMediaItem> = emptyList(),
-        val audioTrack: AudioTrackItem? = null,
+        val audioTracks: List<AudioTrackItem> = emptyList(),
+        val trimmingMediaUri: String? = null,
+        val trimmingAudioId: String? = null,
         val textFields: List<TextFieldItem> = emptyList(),
         val transitions: List<TransitionItem> = emptyList(),
         val transitionDurationMs: Int = 350,
@@ -96,8 +124,14 @@ interface EditorContract {
         val showAutoCaptionsSheet: Boolean = false,
         val autoCaptionsConfig: AutoCaptionsConfig = AutoCaptionsConfig(),
         val captions: List<CaptionItem> = emptyList(),
+        val textOverlays: List<TextOverlayItem> = emptyList(),
+        val showTextOverlayInput: Boolean = false,
+        val editingTextOverlayId: String? = null,
+        val showDurationPickerOverlayId: String? = null,
         val selectedAspectRatio: String = "9:16",
         val availableAspectRatios: List<String> = listOf("9:16", "16:9", "1:1", "4:5", "4:3"),
+        val selectedResolution: EditorResolutionOption = EditorResolutionOption.FHD_1080,
+        val availableResolutions: List<EditorResolutionOption> = EditorResolutionOption.entries,
     ) {
         val canExport: Boolean
             get() = selectedMedia.isNotEmpty() && !isResolvingMedia && errorMessage == null
@@ -164,6 +198,35 @@ interface EditorContract {
     )
 
     @Immutable
+    data class ExportAudioTrackPayload(
+        val uri: String,
+        val fileName: String,
+        val durationMs: Long,
+        val trimStartMs: Long,
+        val trimEndMs: Long?,
+        val volume: Float,
+        val offsetMs: Long,
+    )
+
+    @Immutable
+    data class CaptionPayload(
+        val id: String,
+        val text: String,
+        val startMs: Long,
+        val endMs: Long,
+    )
+
+    @Immutable
+    data class TextOverlayPayload(
+        val id: String,
+        val text: String,
+        val startMs: Long,
+        val endMs: Long,
+        val gravity: String,
+        val textSizeSp: Float,
+    )
+
+    @Immutable
     data class ExportPayload(
         val projectId: String?,
         val templateId: TemplateId,
@@ -174,6 +237,12 @@ interface EditorContract {
         val transitionIntensityPercent: Int,
         val aspectRatioLabel: String,
         val backgroundMusicUri: String? = null,
+        val isMuted: Boolean = false,
+        val audioTracks: List<ExportAudioTrackPayload> = emptyList(),
+        val resolutionWidth: Int = 1080,
+        val resolutionHeight: Int = 1920,
+        val captions: List<CaptionPayload> = emptyList(),
+        val textOverlays: List<TextOverlayPayload> = emptyList(),
     )
 
     sealed interface Event {
@@ -209,12 +278,32 @@ interface EditorContract {
         data class DeleteCaption(val captionId: String) : Event
         data class EditCaption(val captionId: String, val newText: String) : Event
         data class AspectRatioSelected(val ratio: String) : Event
+        data class ResolutionSelected(val resolution: EditorResolutionOption) : Event
+        data object AddTextOverlay : Event
+        data class ConfirmTextOverlay(val text: String, val gravity: TextOverlayGravity, val durationMs: Long) : Event
+        data object DismissTextOverlayInput : Event
+        data class DeleteTextOverlay(val overlayId: String) : Event
+        data class EditTextOverlay(val overlayId: String) : Event
+        data class UpdateTextOverlay(val overlayId: String, val text: String, val gravity: TextOverlayGravity, val durationMs: Long) : Event
+        data class TextOverlayPositionChanged(val overlayId: String, val xFraction: Float, val yFraction: Float) : Event
+        data class TextOverlayRotationChanged(val overlayId: String, val rotationDegrees: Float) : Event
+        data class ShowDurationPicker(val overlayId: String) : Event
+        data object DismissDurationPicker : Event
+        data class TextOverlayDurationChanged(val overlayId: String, val durationMs: Long) : Event
         data object AddMediaClicked : Event
         data class AdditionalMediaSelected(val uris: List<String>) : Event
         data object AddAudioClicked : Event
         data class AudioFileSelected(val uri: String) : Event
-        data object RemoveAudioTrack : Event
-        data class AudioVolumeChanged(val volume: Float) : Event
+        data class RemoveAudioTrack(val audioId: String) : Event
+        data class AudioVolumeChanged(val audioId: String, val volume: Float) : Event
+        data class AudioTrimChanged(val audioId: String, val startMs: Long, val endMs: Long) : Event
+        data class AudioOffsetChanged(val audioId: String, val offsetMs: Long) : Event
+        data class OpenMediaTrimmer(val uri: String) : Event
+        data object DismissTrimmer : Event
+        data class OpenAudioTrimmer(val audioId: String) : Event
+        data object ProjectNameClicked : Event
+        data class ProjectNameChanged(val name: String) : Event
+        data object DismissRenameDialog : Event
         data object ExportClicked : Event
     }
 

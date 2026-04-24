@@ -410,9 +410,13 @@ class ExportViewModel(
                 return@launch
             }
 
-            val backgroundMusicUri = current.backgroundMusicUri
-                ?.trim()
-                ?.takeIf { it.isNotBlank() }
+            val editorIsMuted = launchArgs.isMuted
+            val editorAudioTracks = launchArgs.audioTracks
+
+            val backgroundMusicUri = when {
+                editorAudioTracks.isNotEmpty() -> editorAudioTracks.first().uri
+                else -> current.backgroundMusicUri?.trim()?.takeIf { it.isNotBlank() }
+            }
 
             val shouldLoopBackgroundAudio = when (template.musicPolicy.trimBehavior) {
                 AudioTrimBehavior.LOOP,
@@ -420,8 +424,79 @@ class ExportViewModel(
                 else -> false
             }
 
-            val preserveOriginalClipAudio = current.clipAudioVolume > 0.01f &&
+            val preserveOriginalClipAudio = !editorIsMuted &&
+                    current.clipAudioVolume > 0.01f &&
                     template.musicPolicy.preserveOriginalClipAudio
+
+            val backgroundAudioVolume = if (editorAudioTracks.isNotEmpty()) {
+                editorAudioTracks.first().volume.coerceIn(0f, 1f)
+            } else {
+                current.musicAudioVolume
+            }
+
+            val captionOverlays = launchArgs.captions
+                .filter { it.text.isNotBlank() }
+                .map { caption ->
+                    ExportTextOverlay(
+                        id = caption.id,
+                        text = caption.text,
+                        gravity = ExportTextGravity.BOTTOM_CENTER,
+                        startTimeMs = caption.startMs,
+                        endTimeMs = caption.endMs,
+                        textSizeSp = 18f,
+                    )
+                }
+
+            val plannedOverlays = renderPlan.textOverlays.map { overlay ->
+                ExportTextOverlay(
+                    id = overlay.id,
+                    text = overlay.text,
+                    gravity = when (overlay.gravity) {
+                        PlannedOverlayGravity.TOP_CENTER -> ExportTextGravity.TOP_CENTER
+                        PlannedOverlayGravity.CENTER -> ExportTextGravity.CENTER
+                        PlannedOverlayGravity.BOTTOM_CENTER -> ExportTextGravity.BOTTOM_CENTER
+                    },
+                    startTimeMs = overlay.startTimeMs,
+                    endTimeMs = overlay.endTimeMs,
+                    textSizeSp = overlay.textSizeSp,
+                )
+            }
+
+            val editorTextOverlays = launchArgs.textOverlays
+                .filter { it.text.isNotBlank() }
+                .map { overlay ->
+                    ExportTextOverlay(
+                        id = overlay.id,
+                        text = overlay.text,
+                        gravity = when (overlay.gravity) {
+                            "TOP_CENTER" -> ExportTextGravity.TOP_CENTER
+                            "BOTTOM_CENTER" -> ExportTextGravity.BOTTOM_CENTER
+                            else -> ExportTextGravity.CENTER
+                        },
+                        startTimeMs = overlay.startMs,
+                        endTimeMs = overlay.endMs,
+                        textSizeSp = overlay.textSizeSp,
+                    )
+                }
+
+            val allTextOverlays = plannedOverlays + captionOverlays + editorTextOverlays
+
+            val aspectRatio = com.muratcangzm.model.template.AspectRatio.fromLabel(
+                launchArgs.aspectRatioLabel
+            )
+
+            val outputWidth = launchArgs.resolutionWidth
+            val outputHeight = if (aspectRatio != null) {
+                (outputWidth.toFloat() / aspectRatio.ratio).toInt()
+            } else {
+                launchArgs.resolutionHeight
+            }
+
+            val resolvedResolution = resolveExportResolution(outputWidth, outputHeight)
+
+            val adjustedPreset = preset.copy(
+                resolution = resolvedResolution,
+            )
 
             val request = MediaExportRequest(
                 jobId = ExportJobId(UUID.randomUUID().toString()),
@@ -445,23 +520,10 @@ class ExportViewModel(
                         },
                     )
                 },
-                preset = preset,
+                preset = adjustedPreset,
                 textValues = textMap,
                 transitionPreset = transition,
-                textOverlays = renderPlan.textOverlays.map { overlay ->
-                    ExportTextOverlay(
-                        id = overlay.id,
-                        text = overlay.text,
-                        gravity = when (overlay.gravity) {
-                            PlannedOverlayGravity.TOP_CENTER -> ExportTextGravity.TOP_CENTER
-                            PlannedOverlayGravity.CENTER -> ExportTextGravity.CENTER
-                            PlannedOverlayGravity.BOTTOM_CENTER -> ExportTextGravity.BOTTOM_CENTER
-                        },
-                        startTimeMs = overlay.startTimeMs,
-                        endTimeMs = overlay.endTimeMs,
-                        textSizeSp = overlay.textSizeSp,
-                    )
-                },
+                textOverlays = allTextOverlays,
                 transitionWindows = renderPlan.transitions.map { transitionWindow ->
                     com.muratcangzm.media.domain.export.MediaTransitionWindow(
                         preset = transitionWindow.preset,
@@ -487,12 +549,14 @@ class ExportViewModel(
                             loop = shouldLoopBackgroundAudio,
                         )
                     },
-                    clipAudioVolume = current.clipAudioVolume,
-                    backgroundAudioVolume = current.musicAudioVolume,
+                    clipAudioVolume = if (editorIsMuted) 0f else current.clipAudioVolume,
+                    backgroundAudioVolume = backgroundAudioVolume,
                     fadeInMs = current.fadeInMs,
                     fadeOutMs = current.fadeOutMs,
                 ),
                 outputFileBaseName = template.name,
+                outputWidth = outputWidth,
+                outputHeight = outputHeight,
             )
 
             val sessionResult = runCatching {
@@ -871,9 +935,20 @@ private fun TemplateSpec.toSummary(): ExportContract.TemplateSummary =
         aspectRatioLabel = aspectRatio.displayLabel(),
     )
 
+private fun resolveExportResolution(width: Int, height: Int): ExportResolution {
+    val shortSide = minOf(width, height)
+    return when {
+        shortSide >= 2160 -> ExportResolution.UHD_4K
+        shortSide >= 1440 -> ExportResolution.QHD_2K
+        shortSide >= 1080 -> ExportResolution.FHD_1080
+        else -> ExportResolution.HD_720
+    }
+}
+
 private fun ExportResolution.displayLabel(): String = when (this) {
     ExportResolution.HD_720 -> "720p"
     ExportResolution.FHD_1080 -> "1080p"
+    ExportResolution.QHD_2K -> "2K"
     ExportResolution.UHD_4K -> "4K"
 }
 
@@ -915,6 +990,7 @@ private fun AspectRatio.displayLabel(): String = when (this) {
     AspectRatio.VERTICAL_9_16 -> "9:16"
     AspectRatio.PORTRAIT_4_5 -> "4:5"
     AspectRatio.SQUARE_1_1 -> "1:1"
+    AspectRatio.LANDSCAPE_4_3 -> "4:3"
     AspectRatio.LANDSCAPE_16_9 -> "16:9"
 }
 

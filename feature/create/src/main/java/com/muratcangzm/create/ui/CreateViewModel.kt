@@ -261,5 +261,6 @@ private fun AspectRatio.displayLabel(): String = when (this) {
     AspectRatio.VERTICAL_9_16 -> "9:16"
     AspectRatio.PORTRAIT_4_5 -> "4:5"
     AspectRatio.SQUARE_1_1 -> "1:1"
+    AspectRatio.LANDSCAPE_4_3 -> "4:3"
     AspectRatio.LANDSCAPE_16_9 -> "16:9"
 }

@@ -11,12 +11,51 @@ import com.muratcangzm.templateengine.raw.RawTimingStrategyDefinition
 object SparkCutTemplateSeed {
 
     fun all(): List<RawTemplateDefinition> = listOf(
+        directMedia(),
         partyBurst(),
         glitchRush(),
         gymTransform(),
         travelPostcard(),
         promoFlash(),
     )
+
+    private fun directMedia(): RawTemplateDefinition =
+        RawTemplateDefinition(
+            id = "direct-media",
+            name = "Direct Export",
+            description = "Export your clips directly without a template layout.",
+            category = "MINIMAL",
+            tags = listOf("direct", "export", "simple", "custom"),
+            minMediaCount = 1,
+            maxMediaCount = 20,
+            slots = (0 until 20).map { index ->
+                RawTemplateSlotDefinition(
+                    id = "slot_$index",
+                    index = index,
+                    acceptedType = "ANY",
+                    fillMode = "CENTER_CROP",
+                    isHero = index == 0,
+                    allowUserTrim = true,
+                )
+            },
+            timingStrategy = RawTimingStrategyDefinition.FixedPerSlot(
+                durationMs = 5_000L,
+                allowUserDurationOverrides = true,
+            ),
+            defaultTransition = "CUT",
+            musicPolicy = RawTemplateMusicPolicyDefinition(
+                selectionPolicy = "OPTIONAL",
+                preserveOriginalClipAudio = true,
+                clipAudioVolume = 1f,
+                musicVolume = 0.65f,
+                trimBehavior = "LOOP",
+            ),
+            preview = RawTemplatePreviewDefinition(
+                coverSource = "FIRST_MEDIA",
+            ),
+            isFeatured = false,
+            sortOrder = -1,
+        )
 
     private fun partyBurst(): RawTemplateDefinition =
         RawTemplateDefinition(

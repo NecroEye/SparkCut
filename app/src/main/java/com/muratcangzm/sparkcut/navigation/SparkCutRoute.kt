@@ -32,6 +32,35 @@ data class ExportTextValueNavArg(
 )
 
 @Serializable
+data class ExportAudioTrackNavArg(
+    val uri: String,
+    val fileName: String,
+    val durationMs: Long,
+    val trimStartMs: Long,
+    val trimEndMs: Long?,
+    val volume: Float,
+    val offsetMs: Long,
+)
+
+@Serializable
+data class ExportCaptionNavArg(
+    val id: String,
+    val text: String,
+    val startMs: Long,
+    val endMs: Long,
+)
+
+@Serializable
+data class ExportTextOverlayNavArg(
+    val id: String,
+    val text: String,
+    val startMs: Long,
+    val endMs: Long,
+    val gravity: String,
+    val textSizeSp: Float,
+)
+
+@Serializable
 data class ExportRoute(
     val projectId: String? = null,
     val templateId: String,
@@ -40,4 +69,10 @@ data class ExportRoute(
     val transitionPresetName: String,
     val aspectRatioLabel: String,
     val backgroundMusicUri: String? = null,
+    val isMuted: Boolean = false,
+    val audioTracks: List<ExportAudioTrackNavArg> = emptyList(),
+    val resolutionWidth: Int = 1080,
+    val resolutionHeight: Int = 1920,
+    val captions: List<ExportCaptionNavArg> = emptyList(),
+    val textOverlays: List<ExportTextOverlayNavArg> = emptyList(),
 ) : NavKey

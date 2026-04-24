@@ -23,10 +23,22 @@ enum class AspectRatio(val width: Int, val height: Int) {
     VERTICAL_9_16(9, 16),
     PORTRAIT_4_5(4, 5),
     SQUARE_1_1(1, 1),
+    LANDSCAPE_4_3(4, 3),
     LANDSCAPE_16_9(16, 9);
 
     val ratio: Float
         get() = width.toFloat() / height.toFloat()
+
+    companion object {
+        fun fromLabel(label: String): AspectRatio? = when (label) {
+            "9:16" -> VERTICAL_9_16
+            "4:5" -> PORTRAIT_4_5
+            "1:1" -> SQUARE_1_1
+            "4:3" -> LANDSCAPE_4_3
+            "16:9" -> LANDSCAPE_16_9
+            else -> null
+        }
+    }
 }
 
 enum class SlotAcceptedType {
